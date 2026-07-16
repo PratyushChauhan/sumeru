@@ -4,9 +4,13 @@ Local desktop MCP funnel. Add N upstream MCP servers (stdio commands or HTTP URL
 
 ## Run
 
+Frontend is Svelte 5 + Vite + [shadcn-svelte](https://www.shadcn-svelte.com/) (Rhea). Dev/build are wired through Tauri:
+
 ```bash
+npm install
 npm run tauri dev
 ```
+
 
 ## Funnel endpoint
 
@@ -46,13 +50,14 @@ Funnelit exposes exactly three MCP tools:
 - **stdio**: paste a command (e.g. `npx`) plus args/env secrets (keychain)
 - **http**: paste a Streamable HTTP MCP URL
 
-For HTTP MCPs that advertise OAuth (RFC 9728 / 8414), funnelit shows **Sign in** and opens the provider login page in your browser. Tokens are stored in the keychain. Manual bearer/headers stay under **Advanced**.
+For HTTP MCPs that advertise OAuth (RFC 9728 / 8414), funnelit shows **Sign in** and opens the provider login page in your browser. Tokens are stored in the keychain.
 
-OAuth details:
+OAuth paths:
 
-- Loopback redirect URI (register this on apps that require it, e.g. Slack): `http://127.0.0.1:7342/oauth/callback`
-- Dynamic Client Registration is used when the authorization server supports it
-- If the server does not support DCR, enter the app **Client ID** (and secret if required) once, then Sign in
+- **DCR** — when the authorization server supports Dynamic Client Registration, Sign in registers a client automatically (no Client ID needed)
+- **No DCR** — the UI shows a short guide: create an OAuth app with the provider, register redirect URI `http://127.0.0.1:7342/oauth/callback`, paste Client ID (and secret if required) under **Advanced**, then Sign in
+
+Manual bearer/headers also stay under **Advanced**.
 
 Plain HTTP is allowed only for loopback hosts. Remote URLs must use HTTPS.
 

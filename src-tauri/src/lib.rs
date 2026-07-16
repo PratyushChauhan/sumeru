@@ -192,6 +192,16 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Inputs: http(s) URL. Outputs: unit after opening in the system browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("only http(s) URLs can be opened".into());
+    }
+    open::that(url).map_err(|e| e.to_string())
+}
+
 /// Inputs: mcp id. Outputs: Ok message or connection error.
 #[tauri::command]
 async fn test_server(state: tauri::State<'_, State>, id: String) -> Result<String, String> {
@@ -329,6 +339,7 @@ pub fn run() {
             rotate_token,
             get_autostart,
             set_autostart,
+            open_url,
             probe_mcp_auth,
             start_mcp_oauth,
             test_server,

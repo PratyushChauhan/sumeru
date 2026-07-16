@@ -36,6 +36,8 @@ pub struct AuthProbe {
     pub label: String,
     pub authorization_server: Option<String>,
     pub scopes: Vec<String>,
+    /// True when the AS supports Dynamic Client Registration.
+    pub supports_dcr: bool,
     pub needs_client_id: bool,
     pub has_saved_client: bool,
     pub connected: bool,
@@ -124,13 +126,14 @@ pub async fn probe(url: &str, mcp_id: Option<&str>) -> Result<AuthProbe, String>
             label: "Sign in".into(),
             authorization_server: None,
             scopes: vec![],
+            supports_dcr: false,
             needs_client_id: false,
             has_saved_client: false,
             connected,
         });
     };
     let label = sign_in_label(url, resource.resource_name.as_deref());
-    let has_dcr = as_meta.registration_endpoint.is_some();
+    let supports_dcr = as_meta.registration_endpoint.is_some();
     let has_saved = mcp_id
         .filter(|id| !id.is_empty())
         .and_then(|id| config::get_oauth_client_id(id))
@@ -145,7 +148,8 @@ pub async fn probe(url: &str, mcp_id: Option<&str>) -> Result<AuthProbe, String>
         } else {
             resource.scopes_supported
         },
-        needs_client_id: !has_dcr && !has_saved,
+        supports_dcr,
+        needs_client_id: !supports_dcr && !has_saved,
         has_saved_client: has_saved,
         connected,
     })
@@ -375,6 +379,7 @@ async fn resolve_client(
     client_id: Option<String>,
     client_secret: Option<String>,
 ) -> Result<(String, Option<String>), String> {
+    // Path 1: bring-your-own app credentials from Advanced (or matching saved secret).
     if let Some(id) = client_id {
         let secret = secret_for_client_id(
             &id,
@@ -384,6 +389,7 @@ async fn resolve_client(
         );
         return Ok((id, secret));
     }
+    // Reuse credentials from a previous sign-in for this MCP / host.
     if let Some(id) = config::get_oauth_client_id(mcp_id) {
         return Ok((id, client_secret.or_else(|| config::get_oauth_client_secret(mcp_id))));
     }
@@ -397,10 +403,16 @@ async fn resolve_client(
             client_secret.or_else(|| config::get_oauth_host_client_secret(&host)),
         ));
     }
+    // Path 2: Dynamic Client Registration when the AS supports it.
     if let Some(reg) = &as_meta.registration_endpoint {
         return register_client(reg).await;
     }
-    Err("this MCP requires an OAuth client id (no dynamic registration)".into())
+    Err(
+        "this server does not support automatic registration. \
+         Add your OAuth Client ID under Advanced (bring your own app), \
+         then Sign in again"
+            .into(),
+    )
 }
 
 fn host_client_id(url: &str) -> Option<String> {

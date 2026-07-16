@@ -1,0 +1,89 @@
+<script>
+  import { onMount } from "svelte";
+  import * as api from "$lib/api.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { Badge } from "$lib/components/ui/badge/index.js";
+  import Endpoint from "./components/Endpoint.svelte";
+  import ServerList from "./components/ServerList.svelte";
+  import Editor from "./components/Editor.svelte";
+
+  let status = $state({ running: false, endpoint: "" });
+  let token = $state("");
+  let servers = $state([]);
+  let autostart = $state(false);
+  let editorOpen = $state(false);
+  let editing = $state(null);
+
+  /**
+   * Inputs: none. Outputs: refreshed status, token, servers, autostart.
+   */
+  async function refresh() {
+    const [nextStatus, nextToken, nextServers, nextAutostart] =
+      await Promise.all([
+        api.getStatus(),
+        api.getToken(),
+        api.listServers(),
+        api.getAutostart(),
+      ]);
+    status = nextStatus;
+    token = nextToken;
+    servers = nextServers;
+    autostart = !!nextAutostart;
+  }
+
+  /**
+   * Inputs: none. Outputs: toggled funnel running state.
+   */
+  async function onToggle() {
+    try {
+      const current = await api.getStatus();
+      if (current.running) await api.stopFunnel();
+      else await api.startFunnel();
+      await refresh();
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
+  /**
+   * Inputs: optional server. Outputs: opened editor.
+   */
+  function onEdit(server) {
+    editing = server;
+    editorOpen = true;
+  }
+
+  onMount(() => {
+    (async () => {
+      for (let i = 0; i < 25; i++) {
+        await refresh();
+        if (status.running) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    })().catch((e) => {
+      console.error(e);
+      alert(String(e));
+    });
+  });
+</script>
+
+<header class="flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-start">
+  <div>
+    <h1 class="text-2xl tracking-tight font-semibold m-0">funnelit</h1>
+    <p class="text-muted-foreground text-sm m-0">
+      Configure here · funnel runs in the tray
+    </p>
+  </div>
+  <div class="flex items-center gap-2 flex-wrap">
+    <Badge variant={status.running ? "default" : "outline"}>
+      {status.running ? "running" : "stopped"}
+    </Badge>
+    <Button variant="ghost" onclick={onToggle}>
+      {status.running ? "Pause" : "Resume"}
+    </Button>
+  </div>
+</header>
+
+<Endpoint {status} {token} bind:autostart {refresh} />
+<ServerList {servers} {onEdit} {refresh} />
+<Editor bind:open={editorOpen} server={editing} onSaved={refresh} />
