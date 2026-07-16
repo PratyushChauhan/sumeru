@@ -22,6 +22,7 @@ The funnel starts automatically on launch and keeps running in the system tray w
 - URL: `http://127.0.0.1:7341/mcp`
 - Auth: `Authorization: Bearer <token>` (shown/copied from the UI)
 - Browser `Origin` requests are rejected
+- Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
 Example client config:
 
@@ -37,6 +38,20 @@ Example client config:
   }
 }
 ```
+
+## MCP test client
+
+Stdlib Python client that mirrors the Cursor handshake (`initialize` → `initialized` → GET SSE → `tools/list` → `tools/call`):
+
+```bash
+# Funnelit must be running on :7341
+python3 scripts/mcp_test_client.py --keyring
+python3 scripts/mcp_test_client.py --keyring --clients 3
+python3 scripts/mcp_test_client.py --keyring --call list_mcp_tools \
+  --args '{"mcp_id":"<id>"}'
+```
+
+Token can also come from `FUNNELIT_TOKEN` or `--token`. Exit code `0` on pass.
 
 ## Gateway tools
 

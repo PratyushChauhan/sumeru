@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test src/lib/marketplace.test.js",
+    "test:mcp": "python3 scripts/mcp_test_client.py --keyring",
     "tauri": "tauri"
   },
 

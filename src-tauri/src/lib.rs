@@ -6,17 +6,73 @@ mod pool;
 use std::sync::Arc;
 
 use config::{
-    McpServer, McpTransport, SecretMap, delete_oauth_secrets, delete_secrets, prune_secrets, redact,
-    rotate_endpoint_token, save_config, store_secrets, validate_server, validate_unique_id,
+    delete_oauth_secrets, delete_secrets, prune_secrets, redact, rotate_endpoint_token,
+    save_config, store_secrets, validate_server, validate_unique_id, McpServer, McpTransport,
+    SecretMap,
 };
-use gateway::{AppInner, endpoint_url};
+use gateway::{endpoint_url, AppInner};
 use serde::Serialize;
-use tauri::Manager;
+use std::path::PathBuf;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_autostart::ManagerExt;
 use uuid::Uuid;
+
+/// Bundle id from `tauri.conf.json` — must match GUI `app_config_dir()`.
+const APP_IDENTIFIER: &str = "com.funnelit.app";
+
+/// Inputs: none. Outputs: same path as Tauri `app_config_dir()/funnelit`, or error.
+fn funnelit_config_dir() -> Result<PathBuf, String> {
+    let base = dirs::config_dir().ok_or_else(|| {
+        "could not resolve app config directory (no HOME / platform config path)".to_string()
+    })?;
+    Ok(base.join(APP_IDENTIFIER).join("funnelit"))
+}
+
+/// Inputs: none. Outputs: preferred path for Cursor stdio MCP (`~/.local/bin/funnelit` when present).
+#[tauri::command]
+fn mcp_stdio_command() -> Result<String, String> {
+    let stable = dirs::home_dir()
+        .map(|h| h.join(".local/bin/funnelit"))
+        .filter(|p| p.is_file());
+    if let Some(p) = stable {
+        return Ok(p.to_string_lossy().into_owned());
+    }
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())
+}
+
+/// Inputs: none. Outputs: runs gateway tools over MCP stdio until EOF.
+pub fn run_mcp_stdio() {
+    let dir = match funnelit_config_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("funnelit mcp-stdio: {err}");
+            std::process::exit(1);
+        }
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    rt.block_on(async move {
+        let inner = match AppInner::new(dir) {
+            Ok(inner) => Arc::new(inner),
+            Err(err) => {
+                eprintln!("funnelit mcp-stdio: {err}");
+                std::process::exit(1);
+            }
+        };
+        if let Err(err) = gateway::serve_stdio(inner).await {
+            eprintln!("funnelit mcp-stdio: {err}");
+            std::process::exit(1);
+        }
+    });
+}
 
 /// Inputs: app handle. Outputs: main window shown and focused when present.
 fn show_main(app: &tauri::AppHandle) {
@@ -344,6 +400,7 @@ pub fn run() {
             start_mcp_oauth,
             test_server,
             test_draft,
+            mcp_stdio_command,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
