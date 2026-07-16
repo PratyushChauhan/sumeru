@@ -64,6 +64,10 @@ Manual bearer/headers also stay under **Advanced**.
 
 Plain HTTP is allowed only for loopback hosts. Remote URLs must use HTTPS.
 
+## Marketplace
+
+The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that support DCR (`src/lib/marketplace.json`). **Install** runs browser OAuth first and only saves the MCP if sign-in succeeds. Non-DCR or stdio servers stay on **Configure → Add MCP**.
+
 ## Lifecycle
 
 - Closing the window hides the UI; the MCP funnel keeps serving from the tray
