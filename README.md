@@ -13,7 +13,32 @@ npm run tauri dev
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/funnelit/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.1.0`). Re-pushes with the same version update that release’s assets.
+- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/funnelit/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.1.0`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`funnelit-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. When `NPM_TOKEN` is set as a repo secret, the workflow publishes the [`packages/cli`](packages/cli) npm package.
+
+## npm CLI
+
+Install the launcher (downloads the matching portable binary on first run):
+
+```bash
+npm i -g funnelit
+funnelit doctor
+funnelit mcp-stdio   # or just: funnelit
+```
+
+Cursor / MCP host stdio config example:
+
+```json
+{
+  "mcpServers": {
+    "funnelit": {
+      "command": "funnelit",
+      "args": ["mcp-stdio"]
+    }
+  }
+}
+```
+
+Overrides: `FUNNELIT_BINARY` (local binary path), `FUNNELIT_VERSION`, `FUNNELIT_CACHE_DIR`.
 
 ## Funnel endpoint
 
