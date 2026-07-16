@@ -96,7 +96,7 @@ async fn upsert_server(
     save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
     store_secrets(&id, &secrets).map_err(|e| e.to_string())?;
     if let Some(prev) = &previous {
-        prune_secrets(prev, &server);
+        prune_secrets(prev, &server).map_err(|e| e.to_string())?;
     }
 
     let mut cfg = state.0.config.write().await;
@@ -115,12 +115,14 @@ async fn remove_server(state: tauri::State<'_, State>, id: String) -> Result<(),
     let removed = staged.servers.remove(pos);
     save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
     match &removed.transport {
-        McpTransport::Stdio { env_keys, .. } => delete_secrets(&id, env_keys, &[], false),
+        McpTransport::Stdio { env_keys, .. } => {
+            delete_secrets(&id, env_keys, &[], false).map_err(|e| e.to_string())?
+        }
         McpTransport::Http {
             header_keys,
             has_bearer,
             ..
-        } => delete_secrets(&id, &[], header_keys, *has_bearer),
+        } => delete_secrets(&id, &[], header_keys, *has_bearer).map_err(|e| e.to_string())?,
     }
     let mut cfg = state.0.config.write().await;
     *cfg = staged;
@@ -191,12 +193,14 @@ async fn test_draft(
     let result = state.0.pool.list_tools(&server).await;
     state.0.pool.invalidate(&id).await;
     match &transport {
-        McpTransport::Stdio { env_keys, .. } => delete_secrets(&id, env_keys, &[], false),
+        McpTransport::Stdio { env_keys, .. } => {
+            delete_secrets(&id, env_keys, &[], false).map_err(|e| e.to_string())?
+        }
         McpTransport::Http {
             header_keys,
             has_bearer,
             ..
-        } => delete_secrets(&id, &[], header_keys, *has_bearer),
+        } => delete_secrets(&id, &[], header_keys, *has_bearer).map_err(|e| e.to_string())?,
     }
     result
         .map(|t| format!("connected ({} tools)", t.len()))

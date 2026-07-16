@@ -104,14 +104,14 @@ pub fn load_config(dir: &Path) -> Result<AppConfig, ConfigError> {
 pub fn save_config(dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     fs::create_dir_all(dir)?;
     let path = config_file(dir);
-    let tmp = dir.join("servers.json.tmp");
+    let tmp = dir.join(format!("servers.json.tmp.{}", std::process::id()));
     let data = serde_json::to_string_pretty(config)?;
     {
         let mut file = File::create(&tmp)?;
         file.write_all(data.as_bytes())?;
         file.sync_all()?;
     }
-    fs::rename(&tmp, &path).inspect_err(|_| {
+    replace_file(&tmp, &path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })?;
     #[cfg(unix)]
@@ -120,6 +120,17 @@ pub fn save_config(dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+/// Inputs: temp path and destination. Outputs: unit after replacing destination.
+fn replace_file(tmp: &Path, path: &Path) -> Result<(), std::io::Error> {
+    #[cfg(windows)]
+    {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+    }
+    fs::rename(tmp, path)
 }
 
 /// Inputs: none. Outputs: new high-entropy bearer token.
@@ -181,29 +192,44 @@ pub fn store_secrets(mcp_id: &str, secrets: &SecretMap) -> Result<(), ConfigErro
     Ok(())
 }
 
-/// Inputs: mcp id and key names. Outputs: unit; missing secrets ignored.
-pub fn delete_secrets(mcp_id: &str, env_keys: &[String], header_keys: &[String], has_bearer: bool) {
-    for k in env_keys {
-        let _ = keyring::Entry::new(SERVICE, &secret_user("env", mcp_id, k))
-            .and_then(|e| e.delete_credential());
-    }
-    for k in header_keys {
-        let _ = keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, k))
-            .and_then(|e| e.delete_credential());
-    }
-    if has_bearer {
-        let _ = keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, "authorization_bearer"))
-            .and_then(|e| e.delete_credential());
+fn delete_secret_entry(user: &str) -> Result<(), ConfigError> {
+    match keyring::Entry::new(SERVICE, user).and_then(|e| e.delete_credential()) {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(err.into()),
     }
 }
 
-/// Inputs: previous and next server records. Outputs: unit after deleting removed secret keys.
-pub fn prune_secrets(previous: &McpServer, next: &McpServer) {
+/// Inputs: mcp id and key names. Outputs: Ok(()) or first non-NoEntry keyring error.
+pub fn delete_secrets(
+    mcp_id: &str,
+    env_keys: &[String],
+    header_keys: &[String],
+    has_bearer: bool,
+) -> Result<(), ConfigError> {
+    for k in env_keys {
+        delete_secret_entry(&secret_user("env", mcp_id, k))?;
+    }
+    for k in header_keys {
+        delete_secret_entry(&secret_user("hdr", mcp_id, k))?;
+    }
+    if has_bearer {
+        delete_secret_entry(&secret_user("hdr", mcp_id, "authorization_bearer"))?;
+    }
+    Ok(())
+}
+
+/// Inputs: previous and next server records. Outputs: Ok after deleting removed secret keys.
+pub fn prune_secrets(previous: &McpServer, next: &McpServer) -> Result<(), ConfigError> {
     let (old_env, old_hdr, old_bearer) = secret_keysets(previous);
     let (new_env, new_hdr, new_bearer) = secret_keysets(next);
     let drop_env: Vec<_> = old_env.difference(&new_env).cloned().collect();
     let drop_hdr: Vec<_> = old_hdr.difference(&new_hdr).cloned().collect();
-    delete_secrets(&previous.id, &drop_env, &drop_hdr, old_bearer && !new_bearer);
+    delete_secrets(
+        &previous.id,
+        &drop_env,
+        &drop_hdr,
+        old_bearer && !new_bearer,
+    )
 }
 
 fn secret_keysets(server: &McpServer) -> (HashSet<String>, HashSet<String>, bool) {
@@ -307,18 +333,24 @@ pub fn transport_fingerprint(server: &McpServer) -> String {
 
 /// Inputs: error text. Outputs: redacted text with secret values fully masked.
 pub fn redact(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
     let mut out = text.to_string();
-    for needle in ["Bearer ", "bearer ", "authorization=", "api_key=", "API_KEY="] {
-        let mut start = 0;
-        while let Some(rel) = out[start..].find(needle) {
-            let idx = start + rel;
+    let mut shift = 0isize;
+    for needle in ["bearer ", "authorization=", "api_key="] {
+        let mut search_from = 0usize;
+        while let Some(rel) = lower[search_from..].find(needle) {
+            let idx = search_from + rel;
             let value_start = idx + needle.len();
-            let value_end = out[value_start..]
+            let value_end = text[value_start..]
                 .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&'))
                 .map(|i| value_start + i)
-                .unwrap_or(out.len());
-            out.replace_range(value_start..value_end, "***");
-            start = value_start + 3;
+                .unwrap_or(text.len());
+            let adj_start = (value_start as isize + shift) as usize;
+            let adj_end = (value_end as isize + shift) as usize;
+            let old_len = adj_end - adj_start;
+            out.replace_range(adj_start..adj_end, "***");
+            shift += 3 - old_len as isize;
+            search_from = value_end;
         }
     }
     out
@@ -350,9 +382,30 @@ mod tests {
     #[test]
     fn redacts_full_bearer_tokens() {
         let token = "abcdefghijklmnopqr";
-        let redacted = redact(&format!("Authorization: Bearer {token} and Bearer {token}"));
+        let redacted = redact(&format!("Authorization: Bearer {token} and BEARER {token}"));
         assert!(!redacted.contains(token));
-        assert!(redacted.contains("Bearer ***"));
+        assert!(redacted.to_ascii_lowercase().contains("bearer ***"));
+    }
+
+    #[test]
+    fn save_config_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = AppConfig::default();
+        save_config(dir.path(), &cfg).unwrap();
+        cfg.servers.push(McpServer {
+            id: "x".into(),
+            name: "x".into(),
+            enabled: true,
+            transport: McpTransport::Stdio {
+                command: "/bin/true".into(),
+                args: vec![],
+                env_keys: vec![],
+            },
+        });
+        save_config(dir.path(), &cfg).unwrap();
+        let loaded = load_config(dir.path()).unwrap();
+        assert_eq!(loaded.servers.len(), 1);
+        assert_eq!(loaded.servers[0].id, "x");
     }
 
     #[test]
