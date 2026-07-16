@@ -21,13 +21,15 @@ use crate::config::{
 
 struct Cached {
     peer: Peer<RoleClient>,
-    _running: RunningService<RoleClient, ()>,
+    running: RunningService<RoleClient, ()>,
     fingerprint: String,
 }
 
+type Slot = Arc<Mutex<Option<Cached>>>;
+
 #[derive(Default)]
 pub struct ClientPool {
-    inner: Mutex<HashMap<String, Cached>>,
+    slots: Mutex<HashMap<String, Slot>>,
 }
 
 impl ClientPool {
@@ -36,19 +38,37 @@ impl ClientPool {
         Self::default()
     }
 
+    async fn slot(&self, id: &str) -> Slot {
+        let mut slots = self.slots.lock().await;
+        slots
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(None)))
+            .clone()
+    }
+
     /// Inputs: mcp id. Outputs: unit after dropping any cached client.
     pub async fn invalidate(&self, id: &str) {
-        let mut guard = self.inner.lock().await;
-        if let Some(mut cached) = guard.remove(id) {
-            let _ = cached._running.close_with_timeout(Duration::from_secs(2)).await;
+        let slot = {
+            let mut slots = self.slots.lock().await;
+            slots.remove(id)
+        };
+        if let Some(slot) = slot {
+            if let Some(mut cached) = slot.lock().await.take() {
+                let _ = cached.running.close_with_timeout(Duration::from_secs(2)).await;
+            }
         }
     }
 
     /// Inputs: none. Outputs: unit after closing every cached client.
     pub async fn clear(&self) {
-        let mut guard = self.inner.lock().await;
-        for (_, mut cached) in guard.drain() {
-            let _ = cached._running.close_with_timeout(Duration::from_secs(2)).await;
+        let slots = {
+            let mut guard = self.slots.lock().await;
+            std::mem::take(&mut *guard)
+        };
+        for (_, slot) in slots {
+            if let Some(mut cached) = slot.lock().await.take() {
+                let _ = cached.running.close_with_timeout(Duration::from_secs(2)).await;
+            }
         }
     }
 
@@ -58,25 +78,30 @@ impl ClientPool {
             return Err(ConfigError::msg("mcp is disabled"));
         }
         let fp = transport_fingerprint(server);
-        let mut guard = self.inner.lock().await;
-        if let Some(cached) = guard.get(&server.id) {
+        let slot = self.slot(&server.id).await;
+        let mut guard = slot.lock().await;
+        if let Some(cached) = guard.as_ref() {
             if cached.fingerprint == fp && !cached.peer.is_transport_closed() {
                 return Ok(cached.peer.clone());
             }
         }
-        if let Some(mut old) = guard.remove(&server.id) {
-            let _ = old._running.close_with_timeout(Duration::from_secs(2)).await;
+        if let Some(mut old) = guard.take() {
+            drop(guard);
+            let _ = old.running.close_with_timeout(Duration::from_secs(2)).await;
+            guard = slot.lock().await;
+            if let Some(cached) = guard.as_ref() {
+                if cached.fingerprint == fp && !cached.peer.is_transport_closed() {
+                    return Ok(cached.peer.clone());
+                }
+            }
         }
         let running = connect(server).await?;
         let peer = running.peer().clone();
-        guard.insert(
-            server.id.clone(),
-            Cached {
-                peer: peer.clone(),
-                _running: running,
-                fingerprint: fp,
-            },
-        );
+        *guard = Some(Cached {
+            peer: peer.clone(),
+            running,
+            fingerprint: fp,
+        });
         Ok(peer)
     }
 
@@ -168,7 +193,8 @@ async fn connect(server: &McpServer) -> Result<RunningService<RoleClient, ()>, C
             }
             let client = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(60))
+                .connect_timeout(Duration::from_secs(10))
+                .read_timeout(Duration::from_secs(60))
                 .build()
                 .map_err(|e| ConfigError::msg(e.to_string()))?;
             let transport = StreamableHttpClientTransport::with_client(client, cfg);

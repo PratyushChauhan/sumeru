@@ -21,7 +21,11 @@ use rmcp::{
     },
 };
 use serde::{Deserialize, Serialize};
-use tokio::{net::TcpListener, sync::RwLock, task::JoinHandle};
+use tokio::{
+    net::TcpListener,
+    sync::{Mutex, RwLock},
+    task::JoinHandle,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -36,6 +40,8 @@ pub struct AppInner {
     pub pool: SharedPool,
     pub token: Arc<RwLock<String>>,
     pub running: Arc<AtomicBool>,
+    pub exiting: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<()>>,
     shutdown: Arc<RwLock<Option<CancellationToken>>>,
     server_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
@@ -51,6 +57,8 @@ impl AppInner {
             pool: Arc::new(crate::pool::ClientPool::new()),
             token: Arc::new(RwLock::new(token)),
             running: Arc::new(AtomicBool::new(false)),
+            exiting: Arc::new(AtomicBool::new(false)),
+            lifecycle: Arc::new(Mutex::new(())),
             shutdown: Arc::new(RwLock::new(None)),
             server_task: Arc::new(RwLock::new(None)),
         })
@@ -162,16 +170,27 @@ impl Gateway {
     }
 }
 
+/// Inputs: two strings. Outputs: true when equal in constant time for equal lengths.
+fn ct_eq(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in ab.iter().zip(bb.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Inputs: request headers and expected token. Outputs: true when Authorization matches.
 fn bearer_ok(headers: &HeaderMap, expected: &str) -> bool {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| {
-            v.strip_prefix("Bearer ")
-                .or_else(|| v.strip_prefix("bearer "))
-                .is_some_and(|t| t == expected)
-        })
+        .and_then(|v| v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer ")))
+        .is_some_and(|t| ct_eq(t, expected))
 }
 
 async fn auth_middleware(
@@ -200,6 +219,7 @@ async fn auth_middleware(
 
 /// Inputs: shared app state. Outputs: Ok(()) when the funnel HTTP server is listening.
 pub async fn start(app: Arc<AppInner>) -> Result<(), String> {
+    let _guard = app.lifecycle.lock().await;
     if app.running.load(Ordering::SeqCst) {
         return Ok(());
     }
@@ -241,11 +261,18 @@ pub async fn start(app: Arc<AppInner>) -> Result<(), String> {
 
 /// Inputs: shared app state. Outputs: Ok(()) after stopping HTTP and clearing clients.
 pub async fn stop(app: Arc<AppInner>) -> Result<(), String> {
+    let _guard = app.lifecycle.lock().await;
     if let Some(ct) = app.shutdown.write().await.take() {
         ct.cancel();
     }
-    if let Some(task) = app.server_task.write().await.take() {
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), task).await;
+    if let Some(mut task) = app.server_task.write().await.take() {
+        match tokio::time::timeout(std::time::Duration::from_secs(3), &mut task).await {
+            Ok(_) => {}
+            Err(_) => {
+                task.abort();
+                let _ = task.await;
+            }
+        }
     }
     app.pool.clear().await;
     app.running.store(false, Ordering::SeqCst);
@@ -264,7 +291,10 @@ mod tests {
     #[test]
     fn bearer_matching_is_exact() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, "Bearer secret-token".parse().unwrap());
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer secret-token".parse().unwrap(),
+        );
         assert!(bearer_ok(&headers, "secret-token"));
         assert!(!bearer_ok(&headers, "other"));
     }

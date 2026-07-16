@@ -5,8 +5,8 @@ mod pool;
 use std::sync::Arc;
 
 use config::{
-    McpServer, McpTransport, SecretMap, delete_secrets, redact, rotate_endpoint_token, save_config,
-    store_secrets, validate_server,
+    McpServer, McpTransport, SecretMap, delete_secrets, prune_secrets, redact,
+    rotate_endpoint_token, save_config, store_secrets, validate_server, validate_unique_id,
 };
 use gateway::{AppInner, endpoint_url};
 use serde::Serialize;
@@ -65,7 +65,9 @@ async fn upsert_server(
     transport: McpTransport,
     secrets: SecretMap,
 ) -> Result<String, String> {
-    let id = id.filter(|s| !s.is_empty()).unwrap_or_else(|| Uuid::new_v4().to_string());
+    let id = id
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut transport = transport;
     if let McpTransport::Http { has_bearer, .. } = &mut transport {
         let keep_bearer = !*has_bearer
@@ -82,27 +84,36 @@ async fn upsert_server(
         transport,
     };
     validate_server(&server).map_err(|e| e.to_string())?;
+
+    let mut staged = state.0.config.read().await.clone();
+    let previous = staged.servers.iter().find(|s| s.id == id).cloned();
+    validate_unique_id(&staged, &id, previous.is_some()).map_err(|e| e.to_string())?;
+    if let Some(existing) = staged.servers.iter_mut().find(|s| s.id == id) {
+        *existing = server.clone();
+    } else {
+        staged.servers.push(server.clone());
+    }
+    save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
     store_secrets(&id, &secrets).map_err(|e| e.to_string())?;
+    if let Some(prev) = &previous {
+        prune_secrets(prev, &server);
+    }
 
     let mut cfg = state.0.config.write().await;
-    if let Some(existing) = cfg.servers.iter_mut().find(|s| s.id == id) {
-        state.0.pool.invalidate(&id).await;
-        *existing = server;
-    } else {
-        cfg.servers.push(server);
-    }
-    save_config(&state.0.dir, &cfg).map_err(|e| e.to_string())?;
+    *cfg = staged;
+    state.0.pool.invalidate(&id).await;
     Ok(id)
 }
 
 /// Inputs: mcp id. Outputs: unit after removal.
 #[tauri::command]
 async fn remove_server(state: tauri::State<'_, State>, id: String) -> Result<(), String> {
-    let mut cfg = state.0.config.write().await;
-    let Some(pos) = cfg.servers.iter().position(|s| s.id == id) else {
+    let mut staged = state.0.config.read().await.clone();
+    let Some(pos) = staged.servers.iter().position(|s| s.id == id) else {
         return Err("unknown mcp".into());
     };
-    let removed = cfg.servers.remove(pos);
+    let removed = staged.servers.remove(pos);
+    save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
     match &removed.transport {
         McpTransport::Stdio { env_keys, .. } => delete_secrets(&id, env_keys, &[], false),
         McpTransport::Http {
@@ -111,8 +122,9 @@ async fn remove_server(state: tauri::State<'_, State>, id: String) -> Result<(),
             ..
         } => delete_secrets(&id, &[], header_keys, *has_bearer),
     }
+    let mut cfg = state.0.config.write().await;
+    *cfg = staged;
     state.0.pool.invalidate(&id).await;
-    save_config(&state.0.dir, &cfg).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -221,6 +233,16 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                let Some(state) = app_handle.try_state::<State>() else {
+                    return;
+                };
+                if state
+                    .0
+                    .exiting
+                    .swap(true, std::sync::atomic::Ordering::SeqCst)
+                {
+                    return;
+                }
                 api.prevent_exit();
                 let handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {

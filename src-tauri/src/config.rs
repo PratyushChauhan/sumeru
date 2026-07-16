@@ -1,8 +1,9 @@
 //! Persisted MCP definitions and OS-keychain secrets.
 
 use std::{
-    collections::BTreeMap,
-    fs,
+    collections::{BTreeMap, HashSet},
+    fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -99,10 +100,25 @@ pub fn load_config(dir: &Path) -> Result<AppConfig, ConfigError> {
     Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
 }
 
-/// Inputs: config directory and config. Outputs: unit on success.
+/// Inputs: config directory and config. Outputs: unit after atomic write.
 pub fn save_config(dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     fs::create_dir_all(dir)?;
-    fs::write(config_file(dir), serde_json::to_string_pretty(config)?)?;
+    let path = config_file(dir);
+    let tmp = dir.join("servers.json.tmp");
+    let data = serde_json::to_string_pretty(config)?;
+    {
+        let mut file = File::create(&tmp)?;
+        file.write_all(data.as_bytes())?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, &path).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+    }
     Ok(())
 }
 
@@ -118,11 +134,12 @@ pub fn ensure_endpoint_token() -> Result<String, ConfigError> {
     let entry = keyring::Entry::new(SERVICE, TOKEN_USER)?;
     match entry.get_password() {
         Ok(token) if !token.is_empty() => Ok(token),
-        _ => {
+        Ok(_) | Err(keyring::Error::NoEntry) => {
             let token = generate_token();
             entry.set_password(&token)?;
             Ok(token)
         }
+        Err(err) => Err(err.into()),
     }
 }
 
@@ -133,8 +150,12 @@ pub fn rotate_endpoint_token() -> Result<String, ConfigError> {
     Ok(token)
 }
 
+fn encode_part(value: &str) -> String {
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
 fn secret_user(kind: &str, mcp_id: &str, key: &str) -> String {
-    format!("{kind}:{mcp_id}:{key}")
+    format!("{kind}:{}:{}", encode_part(mcp_id), encode_part(key))
 }
 
 /// Inputs: mcp id, env/header/bearer secrets. Outputs: unit on success.
@@ -173,6 +194,34 @@ pub fn delete_secrets(mcp_id: &str, env_keys: &[String], header_keys: &[String],
     if has_bearer {
         let _ = keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, "authorization_bearer"))
             .and_then(|e| e.delete_credential());
+    }
+}
+
+/// Inputs: previous and next server records. Outputs: unit after deleting removed secret keys.
+pub fn prune_secrets(previous: &McpServer, next: &McpServer) {
+    let (old_env, old_hdr, old_bearer) = secret_keysets(previous);
+    let (new_env, new_hdr, new_bearer) = secret_keysets(next);
+    let drop_env: Vec<_> = old_env.difference(&new_env).cloned().collect();
+    let drop_hdr: Vec<_> = old_hdr.difference(&new_hdr).cloned().collect();
+    delete_secrets(&previous.id, &drop_env, &drop_hdr, old_bearer && !new_bearer);
+}
+
+fn secret_keysets(server: &McpServer) -> (HashSet<String>, HashSet<String>, bool) {
+    match &server.transport {
+        McpTransport::Stdio { env_keys, .. } => (
+            env_keys.iter().cloned().collect(),
+            HashSet::new(),
+            false,
+        ),
+        McpTransport::Http {
+            header_keys,
+            has_bearer,
+            ..
+        } => (
+            HashSet::new(),
+            header_keys.iter().cloned().collect(),
+            *has_bearer,
+        ),
     }
 }
 
@@ -219,9 +268,22 @@ pub fn validate_server(server: &McpServer) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Inputs: config and candidate id that must be unique among other servers. Outputs: Ok or duplicate error.
+pub fn validate_unique_id(config: &AppConfig, id: &str, replacing: bool) -> Result<(), ConfigError> {
+    let count = config.servers.iter().filter(|s| s.id == id).count();
+    let allowed = if replacing { 1 } else { 0 };
+    if count > allowed {
+        return Err(ConfigError::msg("duplicate mcp id"));
+    }
+    Ok(())
+}
+
 /// Inputs: URL string. Outputs: Ok(()) when the URL is an allowed MCP endpoint.
 pub fn validate_http_url(raw: &str) -> Result<(), ConfigError> {
     let parsed = Url::parse(raw).map_err(|e| ConfigError::msg(format!("invalid url: {e}")))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ConfigError::msg("url must not contain credentials"));
+    }
     match parsed.scheme() {
         "https" => Ok(()),
         "http" => {
@@ -243,13 +305,20 @@ pub fn transport_fingerprint(server: &McpServer) -> String {
     serde_json::to_string(&server.transport).unwrap_or_default()
 }
 
-/// Inputs: error text. Outputs: redacted text without common secret shapes.
+/// Inputs: error text. Outputs: redacted text with secret values fully masked.
 pub fn redact(text: &str) -> String {
     let mut out = text.to_string();
-    for needle in ["Bearer ", "authorization=", "api_key=", "API_KEY="] {
-        if let Some(idx) = out.find(needle) {
-            let end = (idx + needle.len() + 12).min(out.len());
-            out.replace_range(idx..end, &format!("{needle}***"));
+    for needle in ["Bearer ", "bearer ", "authorization=", "api_key=", "API_KEY="] {
+        let mut start = 0;
+        while let Some(rel) = out[start..].find(needle) {
+            let idx = start + rel;
+            let value_start = idx + needle.len();
+            let value_end = out[value_start..]
+                .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&'))
+                .map(|i| value_start + i)
+                .unwrap_or(out.len());
+            out.replace_range(value_start..value_end, "***");
+            start = value_start + 3;
         }
     }
     out
@@ -275,10 +344,40 @@ mod tests {
         assert!(validate_http_url("http://example.com/mcp").is_err());
         assert!(validate_http_url("http://127.0.0.1:9/mcp").is_ok());
         assert!(validate_http_url("https://example.com/mcp").is_ok());
+        assert!(validate_http_url("https://user:pass@example.com/mcp").is_err());
     }
 
     #[test]
-    fn redacts_bearer_prefix() {
-        assert!(redact("Authorization: Bearer abcdefghijklmnop").contains("***"));
+    fn redacts_full_bearer_tokens() {
+        let token = "abcdefghijklmnopqr";
+        let redacted = redact(&format!("Authorization: Bearer {token} and Bearer {token}"));
+        assert!(!redacted.contains(token));
+        assert!(redacted.contains("Bearer ***"));
+    }
+
+    #[test]
+    fn secret_user_encodes_colons() {
+        assert_eq!(
+            secret_user("env", "a:b", "c:d"),
+            "env:a%3Ab:c%3Ad"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ids() {
+        let cfg = AppConfig {
+            servers: vec![McpServer {
+                id: "x".into(),
+                name: "x".into(),
+                enabled: true,
+                transport: McpTransport::Stdio {
+                    command: "/bin/true".into(),
+                    args: vec![],
+                    env_keys: vec![],
+                },
+            }],
+        };
+        assert!(validate_unique_id(&cfg, "x", false).is_err());
+        assert!(validate_unique_id(&cfg, "x", true).is_ok());
     }
 }

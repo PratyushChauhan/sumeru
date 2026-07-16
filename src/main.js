@@ -10,21 +10,23 @@ async function copy(text) {
 }
 
 /**
- * Inputs: status and token. Outputs: updated endpoint UI.
+ * Inputs: status, token, and whether the live token may appear in the snippet.
+ * Outputs: updated endpoint UI.
  */
-function renderEndpoint(status, token) {
+function renderEndpoint(status, token, revealToken) {
   const running = !!status.running;
   $("#status-pill").textContent = running ? "running" : "stopped";
   $("#status-pill").className = `pill ${running ? "on" : "off"}`;
   $("#btn-toggle").textContent = running ? "Stop" : "Start";
   $("#endpoint-url").value = status.endpoint;
   $("#endpoint-token").value = token;
+  const auth = revealToken ? `Bearer ${token}` : "Bearer <TOKEN>";
   $("#client-snippet").textContent = JSON.stringify(
     {
       mcpServers: {
         funnelit: {
           url: status.endpoint,
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: auth },
         },
       },
     },
@@ -92,15 +94,17 @@ function renderServers(servers) {
 }
 
 /**
- * Inputs: KEY=value text. Outputs: object map.
+ * Inputs: KEY=value text. Outputs: object map or throws on malformed lines.
  */
 function parsePairs(text) {
   const out = {};
-  for (const line of text.split("\n")) {
+  for (const [index, line] of text.split("\n").entries()) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const i = trimmed.indexOf("=");
-    if (i <= 0) continue;
+    if (i <= 0) {
+      throw new Error(`Invalid KEY=value entry on line ${index + 1}`);
+    }
     out[trimmed.slice(0, i).trim()] = trimmed.slice(i + 1);
   }
   return out;
@@ -143,6 +147,17 @@ function readDraft() {
  * Inputs: optional server. Outputs: opened editor dialog.
  */
 function openEditor(server) {
+  for (const selector of [
+    "#edit-command",
+    "#edit-args",
+    "#edit-env",
+    "#edit-url",
+    "#edit-bearer",
+    "#edit-headers",
+  ]) {
+    $(selector).value = "";
+  }
+
   $("#editor-title").textContent = server ? "Edit MCP" : "Add MCP";
   $("#edit-id").value = server?.id || "";
   $("#edit-name").value = server?.name || "";
@@ -186,7 +201,8 @@ async function refresh() {
     invoke("get_token"),
     invoke("list_servers"),
   ]);
-  renderEndpoint(status, token);
+  const reveal = $("#endpoint-token").type === "text";
+  renderEndpoint(status, token, reveal);
   renderServers(servers);
 }
 
@@ -195,11 +211,13 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#btn-add").addEventListener("click", () => openEditor(null));
   $("#btn-copy-url").addEventListener("click", () => copy($("#endpoint-url").value));
   $("#btn-copy-token").addEventListener("click", () => copy($("#endpoint-token").value));
-  $("#btn-show-token").addEventListener("click", () => {
+  $("#btn-show-token").addEventListener("click", async () => {
     const input = $("#endpoint-token");
     const hide = input.type === "text";
     input.type = hide ? "password" : "text";
     $("#btn-show-token").textContent = hide ? "Show" : "Hide";
+    const status = await invoke("get_status");
+    renderEndpoint(status, input.value, !hide);
   });
   $("#btn-rotate-token").addEventListener("click", async () => {
     await invoke("rotate_token");
@@ -232,16 +250,22 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#editor-form").addEventListener("submit", async (e) => {
     if (e.submitter?.value !== "save") return;
     e.preventDefault();
-    const draft = readDraft();
-    await invoke("upsert_server", {
-      id: $("#edit-id").value || null,
-      name: $("#edit-name").value.trim(),
-      enabled: $("#edit-enabled").checked,
-      transport: draft.transport,
-      secrets: draft.secrets,
-    });
-    $("#editor").close();
-    await refresh();
+    const msg = $("#editor-msg");
+    try {
+      const draft = readDraft();
+      await invoke("upsert_server", {
+        id: $("#edit-id").value || null,
+        name: $("#edit-name").value.trim(),
+        enabled: $("#edit-enabled").checked,
+        transport: draft.transport,
+        secrets: draft.secrets,
+      });
+      $("#editor").close();
+      await refresh();
+    } catch (error) {
+      msg.textContent = String(error);
+      msg.className = "msg err";
+    }
   });
   refresh().catch((e) => {
     console.error(e);
