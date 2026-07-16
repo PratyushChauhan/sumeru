@@ -6,6 +6,7 @@ import {
   isInstalled,
   listMarketplaceEntries,
   marketplaceHost,
+  marketplaceIdForUrl,
 } from "./marketplace.js";
 
 describe("marketplace helpers", () => {
@@ -54,4 +55,11 @@ describe("marketplace helpers", () => {
     assert.equal(marketplaceHost("https://api.fathom.ai/mcp"), "api.fathom.ai");
     assert.equal(marketplaceHost("not-a-url"), "not-a-url");
   });
+
+  it("resolves catalog id from MCP URL", () => {
+    assert.equal(marketplaceIdForUrl("https://api.fathom.ai/mcp"), "fathom");
+    assert.equal(marketplaceIdForUrl("https://mcp.linear.app/mcp"), "linear");
+    assert.equal(marketplaceIdForUrl("https://example.com/mcp"), "");
+  });
 });
+

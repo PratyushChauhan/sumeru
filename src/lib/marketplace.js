@@ -49,3 +49,17 @@ export function marketplaceHost(url) {
     return url || "";
   }
 }
+
+/**
+ * Inputs: MCP URL. Outputs: catalog entry id when host/url matches, else "".
+ */
+export function marketplaceIdForUrl(url) {
+  const trimmed = (url || "").trim();
+  if (!trimmed) return "";
+  const entries = listMarketplaceEntries();
+  const exact = entries.find((e) => e.url === trimmed);
+  if (exact) return exact.id;
+  const host = marketplaceHost(trimmed);
+  if (!host) return "";
+  return entries.find((e) => marketplaceHost(e.url) === host)?.id || "";
+}

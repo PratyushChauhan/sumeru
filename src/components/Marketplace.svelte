@@ -4,11 +4,12 @@
     filterMarketplaceEntries,
     isInstalled,
     listMarketplaceEntries,
-    marketplaceHost,
   } from "$lib/marketplace.js";
+  import { marketplaceIcon } from "$lib/marketplace-icons.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
+  import ProviderIcon from "./ProviderIcon.svelte";
 
   /**
    * Inputs: servers list, refresh callback.
@@ -65,68 +66,63 @@
   }
 </script>
 
-<Card.Root>
-  <Card.Header class="gap-3 space-y-0">
-    <div class="flex items-center justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
-      <div>
-        <Card.Title>Marketplace</Card.Title>
-        <p class="text-muted-foreground text-xs m-0 mt-1">
-          One-click install for servers that register automatically (DCR).
-        </p>
-      </div>
-      <Input
-        class="max-w-xs max-sm:max-w-none"
-        type="search"
-        placeholder="Search MCPs"
-        bind:value={query}
-        autocomplete="off"
-      />
-    </div>
+<Card.Root size="sm">
+  <Card.Header
+    class="flex-row items-center justify-between gap-3 space-y-0 pb-0"
+  >
+    <Card.Title class="text-base">Marketplace</Card.Title>
+    <Input
+      class="h-7 max-w-[11rem] text-xs"
+      type="search"
+      placeholder="Search"
+      bind:value={query}
+      autocomplete="off"
+    />
   </Card.Header>
-  <Card.Content>
-    <p
-      class="min-h-5 text-sm m-0 mb-2.5 {msgTone === 'err'
-        ? 'text-destructive'
-        : msgTone === 'ok'
-          ? 'text-ok'
-          : 'text-muted-foreground'}"
-    >
-      {msg}
-    </p>
-    <ul class="m-0 p-0 list-none grid gap-2.5">
+  <Card.Content class="grid gap-2">
+    {#if msg}
+      <p
+        class="text-xs m-0 {msgTone === 'err'
+          ? 'text-destructive'
+          : msgTone === 'ok'
+            ? 'text-ok'
+            : 'text-muted-foreground'}"
+      >
+        {msg}
+      </p>
+    {/if}
+    <ul class="m-0 p-0 list-none grid gap-1.5 sm:grid-cols-2">
       {#if !visible.length}
-        <li class="text-muted-foreground text-sm">
-          No matches. Advanced MCPs can still be added under Configure.
+        <li class="text-muted-foreground text-xs sm:col-span-2">
+          No matches. Add advanced MCPs under Configure.
         </li>
       {:else}
         {#each visible as entry (entry.id)}
           {@const installed = isInstalled(entry, servers)}
           {@const busy = installingId === entry.id}
           <li
-            class="flex items-center justify-between gap-3 rounded-xl border bg-card p-3 max-sm:flex-col max-sm:items-stretch"
+            class="flex items-center gap-2 rounded-lg border bg-card px-2 py-1.5"
           >
-            <div class="min-w-0">
-              <strong class="block font-semibold">{entry.name}</strong>
-              <div class="text-muted-foreground text-xs mt-0.5">
+            <ProviderIcon src={marketplaceIcon(entry.id)} name={entry.name} />
+            <div class="min-w-0 flex-1">
+              <div class="truncate text-sm font-medium leading-tight">
+                {entry.name}
+              </div>
+              <div class="text-muted-foreground truncate text-[11px] leading-tight">
                 {entry.description}
               </div>
-              <div class="text-muted-foreground text-xs truncate mt-1">
-                {marketplaceHost(entry.url)}
-              </div>
             </div>
-            <div class="flex gap-2 flex-wrap shrink-0">
-              {#if installed}
-                <Button variant="outline" size="sm" disabled>Installed</Button>
-              {:else}
-                <Button
-                  size="sm"
-                  disabled={!!installingId}
-                  onclick={() => onInstall(entry)}
-                >
-                  {busy ? "Signing in…" : "Install"}
-                </Button>
-              {/if}
-            </div>
+            {#if installed}
+              <Button variant="outline" size="xs" disabled>Installed</Button>
+            {:else}
+              <Button
+                size="xs"
+                disabled={!!installingId}
+                onclick={() => onInstall(entry)}
+              >
+                {busy ? "…" : "Install"}
+              </Button>
+            {/if}
           </li>
         {/each}
       {/if}
