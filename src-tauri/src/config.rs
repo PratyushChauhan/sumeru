@@ -57,7 +57,7 @@ pub struct AppConfig {
     pub servers: Vec<McpServer>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SecretMap {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -270,6 +270,89 @@ pub fn get_bearer_secret(mcp_id: &str) -> Option<String> {
     get_header_secret(mcp_id, "authorization_bearer")
 }
 
+fn set_secret(user: &str, value: &str) -> Result<(), ConfigError> {
+    keyring::Entry::new(SERVICE, user)?.set_password(value)?;
+    Ok(())
+}
+
+fn get_secret(user: &str) -> Option<String> {
+    keyring::Entry::new(SERVICE, user)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .filter(|s| !s.is_empty())
+}
+
+/// Inputs: mcp id, client id, optional secret. Outputs: unit after keychain write.
+pub fn store_oauth_client(
+    mcp_id: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<(), ConfigError> {
+    set_secret(&secret_user("oauth", mcp_id, "client_id"), client_id)?;
+    match client_secret.filter(|s| !s.is_empty()) {
+        Some(secret) => set_secret(&secret_user("oauth", mcp_id, "client_secret"), secret)?,
+        None => delete_secret_entry(&secret_user("oauth", mcp_id, "client_secret"))?,
+    }
+    Ok(())
+}
+
+/// Inputs: mcp id. Outputs: saved OAuth client id if present.
+pub fn get_oauth_client_id(mcp_id: &str) -> Option<String> {
+    get_secret(&secret_user("oauth", mcp_id, "client_id"))
+}
+
+/// Inputs: mcp id. Outputs: saved OAuth client secret if present.
+pub fn get_oauth_client_secret(mcp_id: &str) -> Option<String> {
+    get_secret(&secret_user("oauth", mcp_id, "client_secret"))
+}
+
+/// Inputs: host, client id, optional secret. Outputs: unit after keychain write.
+pub fn store_oauth_host_client(
+    host: &str,
+    client_id: &str,
+    client_secret: Option<&str>,
+) -> Result<(), ConfigError> {
+    set_secret(&secret_user("oauthhost", host, "client_id"), client_id)?;
+    match client_secret.filter(|s| !s.is_empty()) {
+        Some(secret) => set_secret(&secret_user("oauthhost", host, "client_secret"), secret)?,
+        None => delete_secret_entry(&secret_user("oauthhost", host, "client_secret"))?,
+    }
+    Ok(())
+}
+
+/// Inputs: host. Outputs: host-scoped OAuth client id if present.
+pub fn get_oauth_host_client_id(host: &str) -> Option<String> {
+    get_secret(&secret_user("oauthhost", host, "client_id"))
+}
+
+/// Inputs: host. Outputs: host-scoped OAuth client secret if present.
+pub fn get_oauth_host_client_secret(host: &str) -> Option<String> {
+    get_secret(&secret_user("oauthhost", host, "client_secret"))
+}
+
+/// Inputs: mcp id and refresh token. Outputs: unit after keychain write.
+pub fn store_oauth_refresh(mcp_id: &str, refresh_token: &str) -> Result<(), ConfigError> {
+    set_secret(&secret_user("oauth", mcp_id, "refresh_token"), refresh_token)
+}
+
+/// Inputs: mcp id. Outputs: refresh token if present.
+pub fn get_oauth_refresh(mcp_id: &str) -> Option<String> {
+    get_secret(&secret_user("oauth", mcp_id, "refresh_token"))
+}
+
+/// Inputs: mcp id. Outputs: true when access or refresh credentials exist.
+pub fn oauth_session_present(mcp_id: &str) -> bool {
+    get_bearer_secret(mcp_id).is_some() || get_oauth_refresh(mcp_id).is_some()
+}
+
+/// Inputs: mcp id. Outputs: unit after deleting OAuth secrets for that MCP.
+pub fn delete_oauth_secrets(mcp_id: &str) -> Result<(), ConfigError> {
+    for key in ["client_id", "client_secret", "refresh_token"] {
+        delete_secret_entry(&secret_user("oauth", mcp_id, key))?;
+    }
+    Ok(())
+}
+
 /// Inputs: candidate MCP record. Outputs: Ok(()) or validation error.
 pub fn validate_server(server: &McpServer) -> Result<(), ConfigError> {
     if server.name.trim().is_empty() {
@@ -413,6 +496,22 @@ mod tests {
         assert_eq!(
             secret_user("env", "a:b", "c:d"),
             "env:a%3Ab:c%3Ad"
+        );
+    }
+
+    #[test]
+    fn oauth_secret_users_are_namespaced() {
+        assert_eq!(
+            secret_user("oauth", "mcp-1", "client_secret"),
+            "oauth:mcp-1:client_secret"
+        );
+        assert_eq!(
+            secret_user("oauthhost", "mcp.slack.com", "client_id"),
+            "oauthhost:mcp.slack.com:client_id"
+        );
+        assert_eq!(
+            secret_user("oauth", "mcp-1", "refresh_token"),
+            "oauth:mcp-1:refresh_token"
         );
     }
 

@@ -10,7 +10,7 @@ npm run tauri dev
 
 ## Funnel endpoint
 
-While the app is running and you click **Start**:
+The funnel starts automatically on launch and keeps running in the system tray when you close the window. Open from the tray to configure; Quit from the tray to stop the endpoint. Optionally enable **Run at system startup** (starts hidden in the tray). Pause/Resume in the UI if needed:
 
 - URL: `http://127.0.0.1:7341/mcp`
 - Auth: `Authorization: Bearer <token>` (shown/copied from the UI)
@@ -43,21 +43,30 @@ Funnelit exposes exactly three MCP tools:
 
 ## Upstream MCP formats
 
-- **stdio**: executable path + args array + optional env secrets (keychain)
-- **http**: paste any local/remote Streamable HTTP MCP URL + optional bearer/headers (keychain)
+- **stdio**: paste a command (e.g. `npx`) plus args/env secrets (keychain)
+- **http**: paste a Streamable HTTP MCP URL
+
+For HTTP MCPs that advertise OAuth (RFC 9728 / 8414), funnelit shows **Sign in** and opens the provider login page in your browser. Tokens are stored in the keychain. Manual bearer/headers stay under **Advanced**.
+
+OAuth details:
+
+- Loopback redirect URI (register this on apps that require it, e.g. Slack): `http://127.0.0.1:7342/oauth/callback`
+- Dynamic Client Registration is used when the authorization server supports it
+- If the server does not support DCR, enter the app **Client ID** (and secret if required) once, then Sign in
 
 Plain HTTP is allowed only for loopback hosts. Remote URLs must use HTTPS.
 
 ## Lifecycle
 
+- Closing the window hides the UI; the MCP funnel keeps serving from the tray
 - Upstream clients connect lazily on first `list_mcp_tools` / `execute_mcp_tool`
-- Connections are reused until Funnelit stops, the MCP is edited/deleted, or the transport closes
+- Connections are reused until Funnelit quits, the MCP is edited/deleted, or the transport closes
 - Tool execution is never auto-retried after an ambiguous failure
 
 ## Storage
 
 - Config: app config dir `/funnelit/servers.json`
-- Secrets: OS keychain service `funnelit` (endpoint token, env values, headers, bearer tokens)
+- Secrets: OS keychain service `funnelit` (endpoint token, env/header/bearer values, OAuth client + refresh tokens)
 
 ## Security notes
 

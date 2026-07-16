@@ -2,6 +2,11 @@ const { invoke } = window.__TAURI__.core;
 
 const $ = (sel) => document.querySelector(sel);
 
+/** @type {null | { oauth: boolean, label?: string, needs_client_id?: boolean }} */
+let oauthProbe = null;
+let oauthConnected = false;
+let probeTimer = null;
+
 /**
  * Inputs: text. Outputs: clipboard write promise.
  */
@@ -17,7 +22,7 @@ function renderEndpoint(status, token, revealToken) {
   const running = !!status.running;
   $("#status-pill").textContent = running ? "running" : "stopped";
   $("#status-pill").className = `pill ${running ? "on" : "off"}`;
-  $("#btn-toggle").textContent = running ? "Stop" : "Start";
+  $("#btn-toggle").textContent = running ? "Pause" : "Resume";
   $("#endpoint-url").value = status.endpoint;
   $("#endpoint-token").value = token;
   const auth = revealToken ? `Bearer ${token}` : "Bearer <TOKEN>";
@@ -111,36 +116,141 @@ function parsePairs(text) {
 }
 
 /**
+ * Inputs: connection string. Outputs: true when it looks like an MCP URL.
+ */
+function isHttpSource(value) {
+  return /^https?:\/\//i.test(value.trim());
+}
+
+/**
+ * Inputs: command line text. Outputs: { command, args } after a simple split.
+ */
+function splitCommandLine(text) {
+  const parts = text.trim().match(/(?:[^\s"]+|"[^"]*")+/g) || [];
+  const tokens = parts.map((p) => p.replace(/^"|"$/g, ""));
+  return { command: tokens[0] || "", args: tokens.slice(1) };
+}
+
+/**
+ * Inputs: none. Outputs: editor mcp id, creating one when missing.
+ */
+function ensureEditId() {
+  if (!$("#edit-id").value) {
+    $("#edit-id").value = crypto.randomUUID();
+  }
+  return $("#edit-id").value;
+}
+
+/**
  * Inputs: none. Outputs: transport + secrets from the editor form.
  */
 function readDraft() {
-  const kind = $("#edit-kind").value;
-  if (kind === "stdio") {
-    const env = parsePairs($("#edit-env").value);
+  const source = $("#edit-source").value.trim();
+  if (isHttpSource(source)) {
+    const headers = parsePairs($("#edit-headers").value);
+    const bearer = $("#edit-bearer").value.trim();
     return {
       transport: {
-        kind: "stdio",
-        command: $("#edit-command").value.trim(),
-        args: $("#edit-args")
-          .value.split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        env_keys: Object.keys(env),
+        kind: "http",
+        url: source,
+        header_keys: Object.keys(headers),
+        has_bearer: oauthConnected || !!bearer,
       },
-      secrets: { env, headers: {}, bearer: null },
+      secrets: { env: {}, headers, bearer: bearer || null },
     };
   }
-  const headers = parsePairs($("#edit-headers").value);
-  const bearer = $("#edit-bearer").value.trim();
+  const env = parsePairs($("#edit-env").value);
+  const argLines = $("#edit-args")
+    .value.split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const parsed = splitCommandLine(source);
   return {
     transport: {
-      kind: "http",
-      url: $("#edit-url").value.trim(),
-      header_keys: Object.keys(headers),
-      has_bearer: !!bearer,
+      kind: "stdio",
+      command: parsed.command,
+      args: argLines.length ? parsed.args.concat(argLines) : parsed.args,
+      env_keys: Object.keys(env),
     },
-    secrets: { env: {}, headers, bearer: bearer || null },
+    secrets: { env, headers: {}, bearer: null },
   };
+}
+
+/**
+ * Inputs: none. Outputs: OAuth panel synced to latest probe.
+ */
+function renderOauth() {
+  const panel = $("#oauth-panel");
+  const creds = $("#oauth-creds");
+  const advanced = $("#http-advanced");
+  const btn = $("#btn-oauth");
+  const status = $("#oauth-status");
+  if (!oauthProbe?.oauth) {
+    panel.classList.add("hidden");
+    creds.classList.add("hidden");
+    advanced.classList.add("bare");
+    advanced.open = true;
+    return;
+  }
+  panel.classList.remove("hidden");
+  advanced.classList.remove("bare");
+  advanced.open = false;
+  creds.classList.toggle("hidden", !oauthProbe.needs_client_id);
+  status.textContent = oauthConnected
+    ? "Connected"
+    : "Browser sign-in required";
+  btn.textContent = oauthConnected
+    ? "Reconnect"
+    : oauthProbe.label || "Sign in";
+}
+
+/**
+ * Inputs: none. Outputs: probe + OAuth UI for the current HTTP URL.
+ */
+async function probeAuth() {
+  const url = $("#edit-source").value.trim();
+  if (!isHttpSource(url)) {
+    oauthProbe = null;
+    renderOauth();
+    return;
+  }
+  const probedUrl = url;
+  $("#oauth-status").textContent = "Checking sign-in…";
+  $("#oauth-panel").classList.remove("hidden");
+  let next;
+  try {
+    next = await invoke("probe_mcp_auth", {
+      url,
+      id: $("#edit-id").value || null,
+    });
+  } catch {
+    next = { oauth: false };
+  }
+  if ($("#edit-source").value.trim() !== probedUrl) return;
+  oauthProbe = next;
+  if (next.connected) oauthConnected = true;
+  renderOauth();
+}
+
+/**
+ * Inputs: none. Outputs: form sections matched to detected transport.
+ */
+function syncKind() {
+  const http = isHttpSource($("#edit-source").value);
+  $("#stdio-fields").classList.toggle("hidden", http);
+  $("#http-fields").classList.toggle("hidden", !http);
+  $("#edit-kind-hint").textContent = http
+    ? "Detected HTTP MCP"
+    : "Detected stdio command";
+  if (!http) {
+    oauthProbe = null;
+    renderOauth();
+    return;
+  }
+  clearTimeout(probeTimer);
+  probeTimer = setTimeout(() => {
+    probeAuth().catch(console.error);
+  }, 250);
 }
 
 /**
@@ -148,12 +258,13 @@ function readDraft() {
  */
 function openEditor(server) {
   for (const selector of [
-    "#edit-command",
+    "#edit-source",
     "#edit-args",
     "#edit-env",
-    "#edit-url",
     "#edit-bearer",
     "#edit-headers",
+    "#edit-oauth-client-id",
+    "#edit-oauth-client-secret",
   ]) {
     $(selector).value = "";
   }
@@ -164,50 +275,78 @@ function openEditor(server) {
   $("#edit-enabled").checked = server?.enabled ?? true;
   $("#editor-msg").textContent = "";
   $("#editor-msg").className = "msg";
-  const kind = server?.transport?.kind || "stdio";
-  $("#edit-kind").value = kind;
-  toggleKind();
-  if (kind === "stdio") {
-    $("#edit-command").value = server?.transport?.command || "";
+  oauthConnected = !!(
+    server?.transport?.kind === "http" && server.transport.has_bearer
+  );
+  oauthProbe = null;
+  if (server?.transport?.kind === "http") {
+    $("#edit-source").value = server.transport.url || "";
+    $("#edit-headers").value = (server.transport.header_keys || [])
+      .map((k) => `${k}=`)
+      .join("\n");
+  } else {
+    $("#edit-source").value = server?.transport?.command || "";
     $("#edit-args").value = (server?.transport?.args || []).join("\n");
     $("#edit-env").value = (server?.transport?.env_keys || [])
       .map((k) => `${k}=`)
       .join("\n");
-  } else {
-    $("#edit-url").value = server?.transport?.url || "";
-    $("#edit-bearer").value = "";
-    $("#edit-headers").value = (server?.transport?.header_keys || [])
-      .map((k) => `${k}=`)
-      .join("\n");
   }
+  syncKind();
   $("#editor").showModal();
-}
-
-/**
- * Inputs: none. Outputs: toggled transport fields.
- */
-function toggleKind() {
-  const http = $("#edit-kind").value === "http";
-  $("#stdio-fields").classList.toggle("hidden", http);
-  $("#http-fields").classList.toggle("hidden", !http);
 }
 
 /**
  * Inputs: none. Outputs: refreshed status, token, and server list.
  */
 async function refresh() {
-  const [status, token, servers] = await Promise.all([
+  const [status, token, servers, autostart] = await Promise.all([
     invoke("get_status"),
     invoke("get_token"),
     invoke("list_servers"),
+    invoke("get_autostart"),
   ]);
   const reveal = $("#endpoint-token").type === "text";
   renderEndpoint(status, token, reveal);
   renderServers(servers);
+  $("#autostart").checked = !!autostart;
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  $("#edit-kind").addEventListener("change", toggleKind);
+  $("#edit-source").addEventListener("input", () => {
+    oauthConnected = false;
+    syncKind();
+  });
+  $("#edit-source").addEventListener("paste", () => {
+    oauthConnected = false;
+    queueMicrotask(syncKind);
+  });
+  $("#btn-oauth").addEventListener("click", async () => {
+    const msg = $("#editor-msg");
+    const url = $("#edit-source").value.trim();
+    msg.className = "msg";
+    msg.textContent = "Waiting for browser sign-in…";
+    try {
+      const id = ensureEditId();
+      await invoke("start_mcp_oauth", {
+        url,
+        id,
+        clientId: $("#edit-oauth-client-id").value.trim() || null,
+        clientSecret: $("#edit-oauth-client-secret").value.trim() || null,
+      });
+      oauthConnected = true;
+      oauthProbe = {
+        ...(oauthProbe || { oauth: true }),
+        oauth: true,
+        needs_client_id: false,
+      };
+      renderOauth();
+      msg.textContent = "Signed in";
+      msg.className = "msg ok";
+    } catch (e) {
+      msg.textContent = String(e);
+      msg.className = "msg err";
+    }
+  });
   $("#btn-add").addEventListener("click", () => openEditor(null));
   $("#btn-copy-url").addEventListener("click", () => copy($("#endpoint-url").value));
   $("#btn-copy-token").addEventListener("click", () => copy($("#endpoint-token").value));
@@ -228,6 +367,14 @@ window.addEventListener("DOMContentLoaded", () => {
     if (status.running) await invoke("stop_funnel");
     else await invoke("start_funnel");
     await refresh();
+  });
+  $("#autostart").addEventListener("change", async (e) => {
+    try {
+      await invoke("set_autostart", { enabled: e.target.checked });
+    } catch (err) {
+      e.target.checked = !e.target.checked;
+      alert(String(err));
+    }
   });
   $("#btn-test-draft").addEventListener("click", async () => {
     const msg = $("#editor-msg");
@@ -253,8 +400,9 @@ window.addEventListener("DOMContentLoaded", () => {
     const msg = $("#editor-msg");
     try {
       const draft = readDraft();
+      const id = $("#edit-id").value || null;
       await invoke("upsert_server", {
-        id: $("#edit-id").value || null,
+        id: oauthConnected ? ensureEditId() : id,
         name: $("#edit-name").value.trim(),
         enabled: $("#edit-enabled").checked,
         transport: draft.transport,
@@ -267,7 +415,13 @@ window.addEventListener("DOMContentLoaded", () => {
       msg.className = "msg err";
     }
   });
-  refresh().catch((e) => {
+  (async () => {
+    for (let i = 0; i < 25; i++) {
+      await refresh();
+      if ((await invoke("get_status")).running) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  })().catch((e) => {
     console.error(e);
     alert(String(e));
   });

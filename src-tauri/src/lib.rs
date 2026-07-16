@@ -1,17 +1,31 @@
 mod config;
 mod gateway;
+mod oauth;
 mod pool;
 
 use std::sync::Arc;
 
 use config::{
-    McpServer, McpTransport, SecretMap, delete_secrets, prune_secrets, redact,
+    McpServer, McpTransport, SecretMap, delete_oauth_secrets, delete_secrets, prune_secrets, redact,
     rotate_endpoint_token, save_config, store_secrets, validate_server, validate_unique_id,
 };
 use gateway::{AppInner, endpoint_url};
 use serde::Serialize;
 use tauri::Manager;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::ManagerExt;
 use uuid::Uuid;
+
+/// Inputs: app handle. Outputs: main window shown and focused when present.
+fn show_main(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 #[derive(Clone)]
 struct State(Arc<AppInner>);
@@ -114,19 +128,23 @@ async fn remove_server(state: tauri::State<'_, State>, id: String) -> Result<(),
     };
     let removed = staged.servers.remove(pos);
     save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
-    match &removed.transport {
-        McpTransport::Stdio { env_keys, .. } => {
-            delete_secrets(&id, env_keys, &[], false).map_err(|e| e.to_string())?
-        }
+    {
+        let mut cfg = state.0.config.write().await;
+        *cfg = staged;
+    }
+    state.0.pool.invalidate(&id).await;
+    let cleanup = match &removed.transport {
+        McpTransport::Stdio { env_keys, .. } => delete_secrets(&id, env_keys, &[], false),
         McpTransport::Http {
             header_keys,
             has_bearer,
             ..
-        } => delete_secrets(&id, &[], header_keys, *has_bearer).map_err(|e| e.to_string())?,
+        } => delete_secrets(&id, &[], header_keys, *has_bearer)
+            .and_then(|_| delete_oauth_secrets(&id)),
+    };
+    if let Err(err) = cleanup {
+        eprintln!("funnelit secret cleanup after remove failed: {err}");
     }
-    let mut cfg = state.0.config.write().await;
-    *cfg = staged;
-    state.0.pool.invalidate(&id).await;
     Ok(())
 }
 
@@ -156,6 +174,24 @@ async fn rotate_token(state: tauri::State<'_, State>) -> Result<String, String> 
     Ok(token)
 }
 
+/// Inputs: app handle. Outputs: whether launch-at-login is enabled.
+#[tauri::command]
+fn get_autostart(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Inputs: desired enabled flag. Outputs: unit after OS autostart is updated.
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let auto = app.autolaunch();
+    if enabled {
+        auto.enable()
+    } else {
+        auto.disable()
+    }
+    .map_err(|e| e.to_string())
+}
+
 /// Inputs: mcp id. Outputs: Ok message or connection error.
 #[tauri::command]
 async fn test_server(state: tauri::State<'_, State>, id: String) -> Result<String, String> {
@@ -171,6 +207,26 @@ async fn test_server(state: tauri::State<'_, State>, id: String) -> Result<Strin
         .await
         .map_err(|e| redact(&e.to_string()))?;
     Ok(format!("connected ({} tools)", tools.len()))
+}
+
+/// Inputs: MCP URL and optional mcp id. Outputs: whether browser OAuth is available.
+#[tauri::command]
+async fn probe_mcp_auth(url: String, id: Option<String>) -> Result<oauth::AuthProbe, String> {
+    oauth::probe(&url, id.as_deref()).await
+}
+
+/// Inputs: MCP URL, mcp id, optional client credentials. Outputs: unit after browser sign-in.
+#[tauri::command]
+async fn start_mcp_oauth(
+    state: tauri::State<'_, State>,
+    url: String,
+    id: String,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+) -> Result<(), String> {
+    oauth::authorize(&url, &id, client_id, client_secret).await?;
+    state.0.pool.invalidate(&id).await;
+    Ok(())
 }
 
 /// Inputs: unsaved transport + secrets. Outputs: Ok message when a temporary connect works.
@@ -210,6 +266,10 @@ async fn test_draft(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
         .setup(|app| {
             let dir = app
                 .path()
@@ -217,8 +277,45 @@ pub fn run() {
                 .expect("app config dir")
                 .join("funnelit");
             std::fs::create_dir_all(&dir)?;
-            let inner = AppInner::new(dir).map_err(|e| e.to_string())?;
-            app.manage(State(Arc::new(inner)));
+            let inner = Arc::new(AppInner::new(dir).map_err(|e| e.to_string())?);
+            app.manage(State(inner.clone()));
+            tauri::async_runtime::spawn(async move {
+                if let Err(err) = gateway::start(inner).await {
+                    eprintln!("funnelit auto-start failed: {err}");
+                }
+            });
+
+            let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &quit])?;
+            let mut tray = TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("funnelit")
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "open" => show_main(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+
+            if std::env::args().any(|a| a == "--hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -230,13 +327,27 @@ pub fn run() {
             stop_funnel,
             get_token,
             rotate_token,
+            get_autostart,
+            set_autostart,
+            probe_mcp_auth,
+            start_mcp_oauth,
             test_server,
             test_draft,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+        .run(|app_handle, event| match &event {
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
                 let Some(state) = app_handle.try_state::<State>() else {
                     return;
                 };
@@ -256,5 +367,6 @@ pub fn run() {
                     handle.exit(0);
                 });
             }
+            _ => {}
         });
 }

@@ -11,11 +11,11 @@
     <header class="bar">
       <div>
         <h1>funnelit</h1>
-        <p class="muted">Local MCP funnel</p>
+        <p class="muted">Configure here · funnel runs in the tray</p>
       </div>
       <div class="actions">
-        <span id="status-pill" class="pill off">stopped</span>
-        <button id="btn-toggle" type="button">Start</button>
+        <span id="status-pill" class="pill off">starting…</span>
+        <button id="btn-toggle" type="button" class="ghost">Pause</button>
       </div>
     </header>
 
@@ -38,6 +38,13 @@
         </div>
       </label>
       <pre id="client-snippet" class="snippet"></pre>
+      <label class="check pref" for="autostart">
+        <span>
+          <span class="pref-title">Run at system startup</span>
+          <span class="hint">Starts hidden in the tray after login</span>
+        </span>
+        <input id="autostart" type="checkbox" />
+      </label>
     </section>
 
     <section class="panel">
@@ -61,17 +68,16 @@
           Enabled
         </label>
         <label>
-          Transport
-          <select id="edit-kind">
-            <option value="stdio">stdio command</option>
-            <option value="http">HTTP URL</option>
-          </select>
+          Command or MCP URL
+          <input
+            id="edit-source"
+            required
+            placeholder="https://mcp.slack.com/mcp or npx"
+            autocomplete="off"
+          />
         </label>
+        <p id="edit-kind-hint" class="hint">Paste a URL or a local command</p>
         <div id="stdio-fields" class="stack">
-          <label>
-            Command
-            <input id="edit-command" placeholder="/usr/bin/npx" />
-          </label>
           <label>
             Args (one per line)
             <textarea id="edit-args" rows="3" placeholder="-y&#10;@modelcontextprotocol/server-everything"></textarea>
@@ -82,18 +88,39 @@
           </label>
         </div>
         <div id="http-fields" class="stack hidden">
-          <label>
-            MCP URL
-            <input id="edit-url" placeholder="https://example.com/mcp" />
-          </label>
-          <label>
-            Bearer token (optional)
-            <input id="edit-bearer" type="password" />
-          </label>
-          <label>
-            Headers (Name=value per line)
-            <textarea id="edit-headers" rows="3" placeholder="X-Api-Key=..."></textarea>
-          </label>
+          <div id="oauth-panel" class="stack hidden">
+            <div class="oauth-row">
+              <span id="oauth-status" class="hint">Checking sign-in…</span>
+              <button id="btn-oauth" type="button">Sign in</button>
+            </div>
+            <div id="oauth-creds" class="stack hidden">
+              <label>
+                OAuth client ID
+                <input id="edit-oauth-client-id" autocomplete="off" />
+              </label>
+              <label>
+                OAuth client secret (if required)
+                <input id="edit-oauth-client-secret" type="password" />
+              </label>
+              <p class="hint">
+                Register redirect URI
+                <code>http://127.0.0.1:7342/oauth/callback</code>
+              </p>
+            </div>
+          </div>
+          <details id="http-advanced">
+            <summary>Advanced</summary>
+            <div class="stack">
+              <label>
+                Bearer token (optional)
+                <input id="edit-bearer" type="password" />
+              </label>
+              <label>
+                Headers (Name=value per line)
+                <textarea id="edit-headers" rows="3" placeholder="X-Api-Key=..."></textarea>
+              </label>
+            </div>
+          </details>
         </div>
         <p id="editor-msg" class="msg"></p>
         <div class="actions">
