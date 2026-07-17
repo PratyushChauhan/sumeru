@@ -35,6 +35,7 @@ Install the launcher (downloads the matching portable binary on first run):
 npm i -g sumeru
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
+sumeru gui         # desktop UI
 ```
 
 Cursor / MCP host stdio config example:
