@@ -6,6 +6,7 @@ Node launcher for Sumeru’s portable binary. Downloads from [GitHub Releases](h
 npm i -g sumeru
 sumeru doctor
 sumeru mcp-stdio
+sumeru gui
 ```
 
 See the [repo README](../../README.md#npm-cli) for Cursor config and env overrides.

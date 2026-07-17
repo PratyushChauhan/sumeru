@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { resolveNativeArgs } from "../lib/args.js";
 import { runDoctor } from "../lib/doctor.js";
 import { ensureBinary } from "../lib/download.js";
 import { packageVersion, platformKey } from "../lib/platform.js";
@@ -29,10 +30,7 @@ async function main(argv) {
   }
 
   const bin = await ensureBinary(version, key);
-  const pass =
-    argv.length === 0 || argv[0] === "mcp-stdio"
-      ? ["mcp-stdio", ...argv.slice(argv[0] === "mcp-stdio" ? 1 : 0)]
-      : argv;
+  const pass = resolveNativeArgs(argv);
 
   const child = spawn(bin, pass, { stdio: "inherit" });
   child.on("exit", (code, signal) => {

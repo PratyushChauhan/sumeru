@@ -6,7 +6,11 @@ Install the npm launcher (downloads the matching portable binary on first run):
 npm i -g sumeru
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
+sumeru gui         # desktop UI
+sumeru gui --hidden  # tray-only start
 ```
+
+On Linux, the portable binary needs system WebKitGTK. For a casual desktop install, prefer the AppImage or `.deb` from [GitHub Releases](https://github.com/PratyushChauhan/sumeru/releases).
 
 ## Stdio MCP host config
 
