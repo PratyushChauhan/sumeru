@@ -2,6 +2,8 @@
 
 Local desktop MCP funnel. Add N upstream MCP servers (stdio commands or HTTP URLs) and expose them through one authenticated Streamable HTTP endpoint.
 
+**Docs:** In the app, open **Docs** for Guides and a Cookbook (also under [`docs/`](docs/) in the repo).
+
 ## Run
 
 Frontend is Svelte 5 + Vite + [shadcn-svelte](https://www.shadcn-svelte.com/) (Rhea / mist). Dev/build are wired through Tauri:

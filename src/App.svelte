@@ -9,12 +9,14 @@
   import ServerList from "./components/ServerList.svelte";
   import Editor from "./components/Editor.svelte";
   import Marketplace from "./components/Marketplace.svelte";
+  import Docs from "./components/Docs.svelte";
 
   let status = $state({ running: false, endpoint: "" });
   let token = $state("");
   let servers = $state([]);
   let autostart = $state(false);
   let editorOpen = $state(false);
+  let docsOpen = $state(false);
   let editing = $state(null);
   let tab = $state("configure");
 
@@ -92,6 +94,7 @@
       {/if}
       {status.running ? "running" : "stopped"}
     </Badge>
+    <Button variant="ghost" onclick={() => (docsOpen = true)}>Docs</Button>
     <Button variant="ghost" onclick={onToggle}>
       {status.running ? "Pause" : "Resume"}
     </Button>
@@ -113,3 +116,4 @@
 </Tabs.Root>
 
 <Editor bind:open={editorOpen} server={editing} onSaved={refresh} />
+<Docs bind:open={docsOpen} />
