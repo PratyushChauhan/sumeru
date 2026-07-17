@@ -1260,6 +1260,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "dirs 6.0.0",
+ "glib",
  "http",
  "keyring",
  "open",

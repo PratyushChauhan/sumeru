@@ -77,6 +77,20 @@ pub fn run_mcp_stdio() {
     });
 }
 
+/// Inputs: none. Outputs: GLib default log handler that drops ayatana deprecation noise.
+///
+/// Tauri's Linux tray still uses libayatana-appindicator; the library logs a
+/// deprecation warning on every tray create. Filter only that message.
+#[cfg(target_os = "linux")]
+fn silence_ayatana_deprecation() {
+    glib::log_set_default_handler(|domain, level, message| {
+        if domain == Some("libayatana-appindicator") && message.contains("is deprecated") {
+            return;
+        }
+        glib::log_default_handler(domain, level, Some(message));
+    });
+}
+
 /// Inputs: app handle. Outputs: main window shown and focused when present.
 fn show_main(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -339,6 +353,7 @@ async fn test_draft(
         .map_err(|e| redact(&e.to_string()))
 }
 
+/// Inputs: none. Outputs: runs the Tauri desktop app (tray, autostart, gateway).
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -360,6 +375,9 @@ pub fn run() {
                     eprintln!("funnelit auto-start failed: {err}");
                 }
             });
+
+            #[cfg(target_os = "linux")]
+            silence_ayatana_deprecation();
 
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
