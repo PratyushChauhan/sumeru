@@ -8,6 +8,12 @@ Formerly **funnelit**. Local desktop MCP funnel. Add N upstream MCP servers (std
 
 **Linux AppImage on Wayland:** if you see `EGL_BAD_PARAMETER`, run with `LD_PRELOAD=/usr/lib/libwayland-client.so ./sumeru_*.AppImage` (or use the `.deb` / `.tar.gz`). Newer builds also re-exec with the host Wayland client automatically. See Docs → Linux.
 
+<p align="center">
+  <img src="docs/public/images/configure.png" alt="Configure tab with running badge, endpoint URL, and bearer token" width="420" />
+  &nbsp;
+  <img src="docs/public/images/marketplace.png" alt="Marketplace tab with curated providers and Install buttons" width="420" />
+</p>
+
 ## Run
 
 Frontend is Svelte 5 + Vite + [shadcn-svelte](https://www.shadcn-svelte.com/) (Rhea / mist). Dev/build are wired through Tauri:
