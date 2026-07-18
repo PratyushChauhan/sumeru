@@ -1,9 +1,7 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/public/images/sumeru-mark-light.svg" />
-    <img src="docs/public/images/sumeru-mark.svg" alt="Sumeru" width="96" />
-  </picture>
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/public/images/sumeru-mark-light.svg" />
+  <img src="docs/public/images/sumeru-mark.svg" alt="Sumeru" width="64" />
+</picture>
 
 # sumeru
 
