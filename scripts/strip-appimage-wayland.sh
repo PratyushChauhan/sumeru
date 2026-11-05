@@ -35,6 +35,8 @@ done < <(find squashfs-root -type f \( \
 \) -print0)
 
 echo "Removed $removed bundled Wayland libraries."
+# Extracted dirs can be 0700; appimagetool (continuous, Nov 2026+) rejects AppDirs others can't read.
+chmod -R a+rX squashfs-root
 
 case "$(uname -m)" in
   x86_64) AT_ARCH=x86_64 ;;
