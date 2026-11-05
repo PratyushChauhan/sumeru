@@ -11,29 +11,21 @@
   import { Switch } from "$lib/components/ui/switch/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
+  import * as Tabs from "$lib/components/ui/tabs/index.js";
+  import { agentInstalls } from "$lib/agents.js";
 
   let { status, token, autostart = $bindable(false), refresh } = $props();
 
   let revealToken = $state(false);
 
-  const snippet = $derived(
-    JSON.stringify(
-      {
-        mcpServers: {
-          sumeru: {
-            url: status?.endpoint ?? "",
-            headers: {
-              Authorization: revealToken
-                ? `Bearer ${token}`
-                : "Bearer <TOKEN>",
-            },
-          },
-        },
-      },
-      null,
-      2,
-    ),
-  );
+  let agent = $state("claude-code");
+
+  /**
+   * Inputs: bearer token or placeholder. Outputs: selected agent install recipe.
+   */
+  const install = (t) =>
+    agentInstalls(status?.endpoint ?? "", t).find((a) => a.id === agent);
+  const shown = $derived(install(revealToken ? token : "<TOKEN>"));
 
   /**
    * Inputs: text. Outputs: clipboard write or user-facing error.
@@ -41,6 +33,17 @@
   async function copy(text) {
     try {
       await navigator.clipboard.writeText(text);
+    } catch (e) {
+      alert(String(e));
+    }
+  }
+
+  /**
+   * Inputs: agent deeplink. Outputs: agent install prompt opened, or user-facing error.
+   */
+  async function openLink(url) {
+    try {
+      await api.openUrl(url);
     } catch (e) {
       alert(String(e));
     }
@@ -103,11 +106,24 @@
       </div>
     </div>
     <div class="grid gap-2">
-      <Label>Cursor mcp.json</Label>
+      <Label>Connect an agent</Label>
+      <Tabs.Root bind:value={agent}>
+        <Tabs.List>
+          {#each agentInstalls("", "") as a (a.id)}
+            <Tabs.Trigger value={a.id}>{a.name}</Tabs.Trigger>
+          {/each}
+        </Tabs.List>
+      </Tabs.Root>
+      <p class="text-muted-foreground text-xs m-0">{shown.hint}</p>
       <pre
-        class="m-0 overflow-auto rounded-2xl bg-background p-3 font-mono text-xs leading-relaxed text-foreground ring-1 ring-foreground/10"
-      >{snippet}</pre>
-      <Button variant="outline" class="w-fit" onclick={() => copy(snippet)}>Copy snippet</Button>
+        class="m-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-background p-3 font-mono text-xs leading-relaxed text-foreground ring-1 ring-foreground/10"
+      >{shown.text}</pre>
+      <div class="flex gap-2 flex-wrap">
+        {#if shown.link}
+          <Button onclick={() => openLink(install(token).link)}>Add to {shown.name}</Button>
+        {/if}
+        <Button variant="outline" onclick={() => copy(install(token).text)}>Copy</Button>
+      </div>
     </div>
     <Separator />
     <div class="flex items-center justify-between gap-4">

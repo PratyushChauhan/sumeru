@@ -8,6 +8,12 @@
       "url": "https://api.fathom.ai/mcp"
     },
     {
+      "id": "granola",
+      "name": "Granola",
+      "description": "Search meeting notes, transcripts, and action items.",
+      "url": "https://mcp.granola.ai/mcp"
+    },
+    {
       "id": "linear",
       "name": "Linear",
       "description": "Create and manage issues, projects, and cycles.",
@@ -18,6 +24,12 @@
       "name": "Notion",
       "description": "Read and update pages, databases, and workspace content.",
       "url": "https://mcp.notion.com/mcp"
+    },
+    {
+      "id": "plane",
+      "name": "Plane",
+      "description": "Create and manage work items, projects, and cycles.",
+      "url": "https://mcp.plane.so/http/mcp"
     },
     {
       "id": "sentry",

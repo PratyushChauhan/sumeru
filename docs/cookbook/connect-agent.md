@@ -1,0 +1,48 @@
+# Connect your agent
+
+1. Start Sumeru and confirm the badge shows **running**
+2. On **Configure → Connect an agent**, pick your agent
+
+![Configure tab with running badge, endpoint URL, and bearer token](/images/configure.png)
+
+3. Install it:
+
+| Agent | How |
+| --- | --- |
+| Claude Code | **Copy** the `claude mcp remove …; claude mcp add …` command and run it in a terminal (it replaces any existing `sumeru` entry) |
+| Codex | **Copy** the `[mcp_servers.sumeru]` table into `~/.codex/config.toml`, replacing any existing one |
+| Cursor | Click **Add to Cursor** (or paste the snippet into `~/.cursor/mcp.json`) |
+| VS Code | Click **Add to VS Code** (or paste the snippet into your user `mcp.json`) |
+| Gemini CLI | **Copy** the `gemini mcp add …` command and run it in a terminal |
+| Windsurf | **Copy** the snippet into `~/.codeium/windsurf/mcp_config.json` |
+
+The preview masks the token unless **Show** is on; **Copy** and **Add to …** always use the real token. Agents store it in plain text in their config, and the CLI commands also land in your shell history — rotate the token if either leaks.
+
+4. Reload MCP servers in your agent and call `list_mcps` to confirm your upstreams appear
+
+After you [rotate the token](./rotate-token.md), repeat these steps — agents keep the old token until you do.
+
+## Stdio alternative
+
+If you prefer stdio instead of HTTP (JSON agents):
+
+```json
+{
+  "mcpServers": {
+    "sumeru": {
+      "command": "sumeru",
+      "args": ["mcp-stdio"]
+    }
+  }
+}
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.sumeru]
+command = "sumeru"
+args = ["mcp-stdio"]
+```
+
+`sumeru` must be on the agent's `PATH` (`npm i -g sumeru-mcp`). Otherwise set `command` to the app binary itself, e.g. `/Applications/sumeru.app/Contents/MacOS/sumeru` on macOS or `/usr/bin/sumeru` from the `.deb`.

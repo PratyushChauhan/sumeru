@@ -7,6 +7,8 @@
 
 ## Example client config
 
+**Configure → Connect an agent** generates this for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf (one-click for Cursor and VS Code). See [Connect your agent](./cookbook/connect-agent.md).
+
 ```json
 {
   "mcpServers": {

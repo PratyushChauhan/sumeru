@@ -17,10 +17,12 @@ describe("marketplace helpers", () => {
       [
         "canva",
         "fathom",
+        "granola",
         "intercom",
         "linear",
         "neon",
         "notion",
+        "plane",
         "sentry",
         "stripe",
       ],
@@ -59,6 +61,8 @@ describe("marketplace helpers", () => {
   it("resolves catalog id from MCP URL", () => {
     assert.equal(marketplaceIdForUrl("https://api.fathom.ai/mcp"), "fathom");
     assert.equal(marketplaceIdForUrl("https://mcp.linear.app/mcp"), "linear");
+    assert.equal(marketplaceIdForUrl("https://mcp.granola.ai/mcp"), "granola");
+    assert.equal(marketplaceIdForUrl("https://mcp.plane.so/http/mcp"), "plane");
     assert.equal(marketplaceIdForUrl("https://example.com/mcp"), "");
   });
 });

@@ -9,7 +9,7 @@
 
 ![Marketplace tab with curated providers and Install buttons](/images/marketplace.png)
 
-4. Point your MCP host (Cursor, etc.) at the funnel endpoint with the bearer token.
+4. Connect your agent from **Configure → Connect an agent** (Claude Code, Codex, Cursor, VS Code, Gemini CLI, Windsurf) — see [Connect your agent](./cookbook/connect-agent.md).
 
 ## Tray and pause
 

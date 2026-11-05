@@ -26,7 +26,7 @@ npm run tauri dev
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.2.12`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. When `NPM_TOKEN` is set as a repo secret, the workflow publishes the [`sumeru-mcp`](packages/cli) npm package.
+- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.2.13`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. When `NPM_TOKEN` is set as a repo secret, the workflow publishes the [`sumeru-mcp`](packages/cli) npm package.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
@@ -63,6 +63,8 @@ The funnel starts automatically on launch and keeps running in the system tray w
 - Auth: `Authorization: Bearer <token>` (shown/copied from the UI)
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
+
+**Configure → Connect an agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`).
 
 Example client config:
 
