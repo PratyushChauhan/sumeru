@@ -45,7 +45,10 @@ describe("agent install recipes", () => {
   it("uses each agent's config shape", () => {
     assert.match(byId("codex").text, /^\[mcp_servers\.sumeru\]\nurl = /);
     assert.equal(JSON.parse(byId("windsurf").text).mcpServers.sumeru.serverUrl, URL_);
-    assert.match(byId("claude-code").text, /^claude mcp add --transport http --scope user sumeru /);
-    assert.match(byId("gemini").text, /^gemini mcp add --scope user --transport http /);
+    assert.match(
+      byId("claude-code").text,
+      /^claude mcp remove --scope user sumeru 2>\/dev\/null; claude mcp add --transport http --scope user sumeru http\S+ --header /,
+    );
+    assert.match(byId("gemini").text, /^gemini mcp add --scope user --transport http sumeru http\S+ --header /);
   });
 });

@@ -187,17 +187,19 @@ pub async fn authorize(
         resource.scopes_supported.clone()
     };
 
+    let client_id = client_id.filter(|s| !s.trim().is_empty());
+    let byo_client = client_id.is_some();
     let (client_id, client_secret) = resolve_client(
         url,
         mcp_id,
         &as_meta,
-        client_id.filter(|s| !s.trim().is_empty()),
+        client_id,
         client_secret.filter(|s| !s.trim().is_empty()),
     )
     .await?;
     if client_secret_required(
         &as_meta.token_endpoint_auth_methods_supported,
-        as_meta.registration_endpoint.is_some(),
+        as_meta.registration_endpoint.is_some() && !byo_client,
     ) && client_secret.as_ref().is_none_or(|s| s.is_empty())
     {
         return Err("this MCP requires an OAuth client secret".into());
@@ -360,11 +362,11 @@ fn auth_server_metadata_url(issuer: &str) -> Result<String, String> {
     }
 }
 
-/// Inputs: token endpoint auth methods, whether the AS supports DCR.
+/// Inputs: token endpoint auth methods, whether the client is DCR-registered (not BYO).
 /// Outputs: true when a client secret is required. DCR servers decide per client
 /// (e.g. Plane registers public clients despite advertising only secret methods).
-fn client_secret_required(methods: &[String], supports_dcr: bool) -> bool {
-    if methods.is_empty() || supports_dcr {
+fn client_secret_required(methods: &[String], dcr_client: bool) -> bool {
+    if methods.is_empty() || dcr_client {
         return false;
     }
     let allows_none = methods.iter().any(|m| m == "none");

@@ -16,7 +16,7 @@ export function agentInstalls(url, token) {
       id: "claude-code",
       name: "Claude Code",
       hint: "Run in a terminal",
-      text: `claude mcp add --transport http --scope user sumeru ${url} --header "Authorization: ${auth}"`,
+      text: `claude mcp remove --scope user sumeru 2>/dev/null; claude mcp add --transport http --scope user sumeru ${url} --header "Authorization: ${auth}"`,
     },
     {
       id: "codex",
@@ -42,7 +42,7 @@ export function agentInstalls(url, token) {
       id: "gemini",
       name: "Gemini CLI",
       hint: "Run in a terminal",
-      text: `gemini mcp add --scope user --transport http --header "Authorization: ${auth}" sumeru ${url}`,
+      text: `gemini mcp add --scope user --transport http sumeru ${url} --header "Authorization: ${auth}"`,
     },
     {
       id: "windsurf",
