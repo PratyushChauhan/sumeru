@@ -273,12 +273,12 @@ fn set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Inputs: http(s) URL. Outputs: unit after opening in the system browser.
+/// Inputs: http(s) URL or Cursor/VS Code MCP install deeplink. Outputs: unit after opening it.
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err("only http(s) URLs can be opened".into());
+    if !matches!(parsed.scheme(), "http" | "https" | "cursor" | "vscode") {
+        return Err("only http(s), cursor, and vscode URLs can be opened".into());
     }
     open::that(url).map_err(|e| e.to_string())
 }

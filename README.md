@@ -64,6 +64,8 @@ The funnel starts automatically on launch and keeps running in the system tray w
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
+**Configure → Connect an agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`).
+
 Example client config:
 
 ```json

@@ -51,7 +51,7 @@ export default defineConfig({
       {
         text: "Cookbook",
         items: [
-          { text: "Connect Cursor", link: "/cookbook/connect-cursor" },
+          { text: "Connect your agent", link: "/cookbook/connect-agent" },
           { text: "Add a stdio MCP", link: "/cookbook/add-stdio-mcp" },
           { text: "OAuth without DCR", link: "/cookbook/oauth-without-dcr" },
           {

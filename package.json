@@ -11,7 +11,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "test": "node --test src/lib/marketplace.test.js packages/cli/lib/*.test.js",
+    "test": "node --test src/lib/marketplace.test.js src/lib/agents.test.js packages/cli/lib/*.test.js",
     "test:mcp": "python3 scripts/mcp_test_client.py --keyring",
     "version:bump": "node scripts/bump-version.mjs",
     "tauri": "tauri"

@@ -71,7 +71,7 @@ export const probeMcpAuth = (args) => invoke("probe_mcp_auth", args);
 export const startMcpOauth = (args) => invoke("start_mcp_oauth", args);
 
 /**
- * Inputs: url. Outputs: void after opening in the system browser.
+ * Inputs: http(s) URL or Cursor/VS Code deeplink. Outputs: void after opening it.
  */
 export const openUrl = (url) => invoke("open_url", { url });
 
