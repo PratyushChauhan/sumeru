@@ -11,6 +11,16 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 3. Complete browser OAuth
 4. Sumeru saves the MCP only if sign-in succeeds
 
+## Add another account
+
+Once a provider is installed, its row shows **N installed** and **Add account**:
+
+1. Click **Add account** and give the account a name (agents see it in `list_mcps`, so make it distinct — e.g. `Plane · acme`)
+2. Click **Sign in**. Sumeru asks the provider for a fresh login (`prompt=login`)
+3. If the provider signs you straight back into the first account, sign out of it in your browser (or use another browser profile) and try again
+
+Each account keeps its own OAuth tokens. MCP names must be unique.
+
 ## What stays on Configure
 
 Use **Configure → Add MCP** for:

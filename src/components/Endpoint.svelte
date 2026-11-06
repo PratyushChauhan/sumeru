@@ -1,7 +1,7 @@
 <!--
   @component
-  Inputs: status, token, autostart, refresh callback.
-  Outputs: endpoint panel UI events.
+  Inputs: status, API keys, servers, autostart, refresh callback.
+  Outputs: endpoint panel UI events (keys, agent setup, autostart).
 -->
 <script>
   import * as api from "$lib/api.js";
@@ -13,19 +13,40 @@
   import { Separator } from "$lib/components/ui/separator/index.js";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { agentInstalls } from "$lib/agents.js";
+  import { agentServerName, scopeLabel, tokenEnvVar } from "$lib/keys.js";
+  import KeyEditor from "./KeyEditor.svelte";
 
-  let { status, token, autostart = $bindable(false), refresh } = $props();
-
-  let revealToken = $state(false);
+  let {
+    status,
+    keys = [],
+    servers = [],
+    autostart = $bindable(false),
+    refresh,
+  } = $props();
 
   let agent = $state("claude-code");
+  let keyId = $state("default");
+  let scope = $state("user");
+  let editorOpen = $state(false);
+  let editing = $state(null);
+
+  const selected = $derived(keys.find((k) => k.id === keyId) ?? keys[0]);
+  /** Repo scope: env var the committed config reads the token from ("" = user scope). */
+  const env = $derived(scope === "repo" ? tokenEnvVar(selected) : "");
+  const agents = $derived(agentInstalls("", "", "sumeru", env));
+  $effect(() => {
+    if (!agents.some((a) => a.id === agent)) agent = agents[0].id;
+  });
 
   /**
-   * Inputs: bearer token or placeholder. Outputs: selected agent install recipe.
+   * Inputs: bearer token or placeholder. Outputs: selected agent recipe for the selected key
+   * and scope (falls back to the first agent when the scope lacks it, e.g. Windsurf in a repo).
    */
-  const install = (t) =>
-    agentInstalls(status?.endpoint ?? "", t).find((a) => a.id === agent);
-  const shown = $derived(install(revealToken ? token : "<TOKEN>"));
+  const install = (t) => {
+    const list = agentInstalls(status?.endpoint ?? "", t, agentServerName(selected), env);
+    return list.find((a) => a.id === agent) ?? list[0];
+  };
+  const shown = $derived(install("<TOKEN>"));
 
   /**
    * Inputs: text. Outputs: clipboard write or user-facing error.
@@ -62,11 +83,19 @@
   }
 
   /**
-   * Inputs: none. Outputs: rotated token via refresh.
+   * Inputs: key or null (new). Outputs: key editor opened.
    */
-  async function onRotate() {
+  function onEditKey(key) {
+    editing = key;
+    editorOpen = true;
+  }
+
+  /**
+   * Inputs: key-changing API call. Outputs: refreshed keys, or user-facing error.
+   */
+  async function run(call) {
     try {
-      await api.rotateToken();
+      await call();
       await refresh();
     } catch (e) {
       alert(String(e));
@@ -89,27 +118,63 @@
       </div>
     </div>
     <div class="grid gap-2">
-      <Label for="endpoint-token">Bearer token</Label>
-      <div class="flex gap-2 flex-wrap">
-        <Input
-          id="endpoint-token"
-          type={revealToken ? "text" : "password"}
-          value={token}
-          readonly
-          class="flex-1 min-w-48"
-        />
-        <Button variant="outline" onclick={() => (revealToken = !revealToken)}>
-          {revealToken ? "Hide" : "Show"}
-        </Button>
-        <Button variant="outline" onclick={() => copy(token)}>Copy</Button>
-        <Button variant="outline" onclick={onRotate}>Rotate</Button>
+      <div class="flex items-center justify-between gap-2">
+        <Label>Keys</Label>
+        <Button variant="outline" size="sm" onclick={() => onEditKey(null)}>Add key</Button>
       </div>
+      <ul class="m-0 p-0 list-none grid gap-2">
+        {#each keys as k (k.id)}
+          <li
+            class="flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2 max-sm:flex-col max-sm:items-stretch"
+          >
+            <div class="min-w-0">
+              <strong class="block text-sm font-semibold">{k.name}</strong>
+              <div class="text-muted-foreground text-xs truncate">
+                {scopeLabel(k, servers)} · installs as {agentServerName(k)}
+              </div>
+            </div>
+            <div class="flex gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onclick={() => copy(k.token)}>Copy token</Button>
+              <Button variant="outline" size="sm" onclick={() => run(() => api.rotateKey(k.id))}>
+                Rotate
+              </Button>
+              <Button variant="outline" size="sm" onclick={() => onEditKey(k)}>Edit</Button>
+              {#if k.id !== "default"}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onclick={() => confirm(`Delete key ${k.name}?`) && run(() => api.removeKey(k.id))}
+                >
+                  Delete
+                </Button>
+              {/if}
+            </div>
+          </li>
+        {/each}
+      </ul>
     </div>
     <div class="grid gap-2">
       <Label>Connect an agent</Label>
+      <div class="flex gap-2 flex-wrap">
+        {#if keys.length > 1}
+          <Tabs.Root bind:value={keyId}>
+            <Tabs.List>
+              {#each keys as k (k.id)}
+                <Tabs.Trigger value={k.id}>{k.name}</Tabs.Trigger>
+              {/each}
+            </Tabs.List>
+          </Tabs.Root>
+        {/if}
+        <Tabs.Root bind:value={scope}>
+          <Tabs.List>
+            <Tabs.Trigger value="user">User</Tabs.Trigger>
+            <Tabs.Trigger value="repo">This repo</Tabs.Trigger>
+          </Tabs.List>
+        </Tabs.Root>
+      </div>
       <Tabs.Root bind:value={agent}>
         <Tabs.List>
-          {#each agentInstalls("", "") as a (a.id)}
+          {#each agents as a (a.id)}
             <Tabs.Trigger value={a.id}>{a.name}</Tabs.Trigger>
           {/each}
         </Tabs.List>
@@ -120,10 +185,25 @@
       >{shown.text}</pre>
       <div class="flex gap-2 flex-wrap">
         {#if shown.link}
-          <Button onclick={() => openLink(install(token).link)}>Add to {shown.name}</Button>
+          <Button onclick={() => openLink(install(selected?.token ?? "").link)}>Add to {shown.name}</Button>
         {/if}
-        <Button variant="outline" onclick={() => copy(install(token).text)}>Copy</Button>
+        <Button variant="outline" onclick={() => copy(install(selected?.token ?? "").text)}>Copy</Button>
       </div>
+      {#if env && shown.id !== "vscode"}
+        <p class="text-muted-foreground text-xs m-0">
+          The repo config never holds the token — set <code>{env}</code> where the agent runs, e.g.
+          a gitignored <code>.envrc</code> (direnv) or your shell profile. Apps opened from the Dock
+          may not see shell variables; start them from a terminal.
+        </p>
+        <pre
+          class="m-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-background p-3 font-mono text-xs leading-relaxed text-foreground ring-1 ring-foreground/10"
+        >{`export ${env}=<TOKEN>`}</pre>
+        <Button
+          variant="outline"
+          class="w-fit"
+          onclick={() => copy(`export ${env}=${selected?.token ?? ""}`)}>Copy export</Button
+        >
+      {/if}
     </div>
     <Separator />
     <div class="flex items-center justify-between gap-4">
@@ -141,3 +221,5 @@
     </div>
   </Card.Content>
 </Card.Root>
+
+<KeyEditor bind:open={editorOpen} key={editing} {servers} onSaved={refresh} />

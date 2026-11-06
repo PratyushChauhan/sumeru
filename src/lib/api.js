@@ -6,9 +6,24 @@ import { invoke } from "@tauri-apps/api/core";
 export const getStatus = () => invoke("get_status");
 
 /**
- * Inputs: none. Outputs: bearer token string.
+ * Inputs: none. Outputs: API keys `[{ id, name, mode, mcp_ids, token }]`.
  */
-export const getToken = () => invoke("get_token");
+export const listKeys = () => invoke("list_keys");
+
+/**
+ * Inputs: `{ id?, name, mode, mcpIds }`. Outputs: saved key id.
+ */
+export const upsertKey = (args) => invoke("upsert_key", args);
+
+/**
+ * Inputs: key id. Outputs: void after deleting the key (not Default).
+ */
+export const removeKey = (id) => invoke("remove_key", { id });
+
+/**
+ * Inputs: key id. Outputs: the key's new token.
+ */
+export const rotateKey = (id) => invoke("rotate_key", { id });
 
 /**
  * Inputs: none. Outputs: configured MCP server list.
@@ -34,11 +49,6 @@ export const startFunnel = () => invoke("start_funnel");
  * Inputs: none. Outputs: void after stopping the funnel.
  */
 export const stopFunnel = () => invoke("stop_funnel");
-
-/**
- * Inputs: none. Outputs: void after rotating the endpoint token.
- */
-export const rotateToken = () => invoke("rotate_token");
 
 /**
  * Inputs: server fields. Outputs: void after upsert.

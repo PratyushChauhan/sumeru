@@ -13,6 +13,8 @@ use url::Url;
 
 const SERVICE: &str = "sumeru";
 const TOKEN_USER: &str = "endpoint-token";
+/// Id of the built-in key that reaches every MCP; its token is the legacy `endpoint-token`.
+pub const DEFAULT_KEY_ID: &str = "default";
 pub const ENDPOINT_URL: &str = "http://127.0.0.1:7341/mcp";
 pub const BIND_ADDR: &str = "127.0.0.1:7341";
 
@@ -55,6 +57,47 @@ fn default_true() -> bool {
 pub struct AppConfig {
     #[serde(default)]
     pub servers: Vec<McpServer>,
+    #[serde(default)]
+    pub keys: Vec<ApiKey>,
+}
+
+impl AppConfig {
+    /// Inputs: key id or name (case-insensitive). Outputs: matching API key, if any.
+    pub fn find_key(&self, id_or_name: &str) -> Option<&ApiKey> {
+        let q = id_or_name.trim().to_lowercase();
+        self.keys
+            .iter()
+            .find(|k| k.id == id_or_name || k.name.trim().to_lowercase() == q)
+    }
+}
+
+/// How an API key's `mcp_ids` list is read.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyMode {
+    /// Every MCP except those listed (new MCPs are reachable).
+    #[default]
+    Exclude,
+    /// Only the MCPs listed (new MCPs are not reachable).
+    Include,
+}
+
+/// Endpoint API key scope; its token lives in the keychain (see `ensure_key_token`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKey {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub mode: KeyMode,
+    #[serde(default)]
+    pub mcp_ids: Vec<String>,
+}
+
+impl ApiKey {
+    /// Inputs: mcp id. Outputs: true when this key may reach the MCP.
+    pub fn allows(&self, mcp_id: &str) -> bool {
+        self.mcp_ids.iter().any(|m| m == mcp_id) == (self.mode == KeyMode::Include)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -91,13 +134,27 @@ pub fn config_file(dir: &Path) -> PathBuf {
     dir.join("servers.json")
 }
 
-/// Inputs: config directory. Outputs: loaded config (empty if missing).
+/// Inputs: config directory. Outputs: loaded config (empty if missing) with a Default key
+/// that reaches every MCP, so configs from before API keys keep working.
 pub fn load_config(dir: &Path) -> Result<AppConfig, ConfigError> {
     let path = config_file(dir);
-    if !path.exists() {
-        return Ok(AppConfig::default());
+    let mut cfg: AppConfig = if path.exists() {
+        serde_json::from_str(&fs::read_to_string(path)?)?
+    } else {
+        AppConfig::default()
+    };
+    if !cfg.keys.iter().any(|k| k.id == DEFAULT_KEY_ID) {
+        cfg.keys.insert(
+            0,
+            ApiKey {
+                id: DEFAULT_KEY_ID.into(),
+                name: "Default".into(),
+                mode: KeyMode::Exclude,
+                mcp_ids: vec![],
+            },
+        );
     }
-    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+    Ok(cfg)
 }
 
 /// Inputs: config directory and config. Outputs: unit after atomic write.
@@ -140,9 +197,18 @@ pub fn generate_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Inputs: none. Outputs: existing or newly generated endpoint token.
-pub fn ensure_endpoint_token() -> Result<String, ConfigError> {
-    let entry = keyring::Entry::new(SERVICE, TOKEN_USER)?;
+/// Inputs: key id. Outputs: keychain user for its token (Default keeps the legacy entry).
+fn token_user(key_id: &str) -> String {
+    if key_id == DEFAULT_KEY_ID {
+        TOKEN_USER.into()
+    } else {
+        format!("key:{}", encode_part(key_id))
+    }
+}
+
+/// Inputs: key id. Outputs: existing or newly generated token for the key.
+pub fn ensure_key_token(key_id: &str) -> Result<String, ConfigError> {
+    let entry = keyring::Entry::new(SERVICE, &token_user(key_id))?;
     match entry.get_password() {
         Ok(token) if !token.is_empty() => Ok(token),
         Ok(_) | Err(keyring::Error::NoEntry) => {
@@ -154,11 +220,25 @@ pub fn ensure_endpoint_token() -> Result<String, ConfigError> {
     }
 }
 
-/// Inputs: none. Outputs: regenerated endpoint token.
-pub fn rotate_endpoint_token() -> Result<String, ConfigError> {
+/// Inputs: key id. Outputs: regenerated token for the key (the old one stops working).
+pub fn rotate_key_token(key_id: &str) -> Result<String, ConfigError> {
     let token = generate_token();
-    keyring::Entry::new(SERVICE, TOKEN_USER)?.set_password(&token)?;
+    keyring::Entry::new(SERVICE, &token_user(key_id))?.set_password(&token)?;
     Ok(token)
+}
+
+/// Inputs: key id. Outputs: unit after deleting the key's token.
+pub fn delete_key_token(key_id: &str) -> Result<(), ConfigError> {
+    delete_secret_entry(&token_user(key_id))
+}
+
+/// Inputs: config. Outputs: (key id, token) for every key, creating missing tokens.
+pub fn key_tokens(config: &AppConfig) -> Result<Vec<(String, String)>, ConfigError> {
+    config
+        .keys
+        .iter()
+        .map(|k| Ok((k.id.clone(), ensure_key_token(&k.id)?)))
+        .collect()
 }
 
 /// Inputs: keyring user fragment. Outputs: percent-escaped fragment safe for `:`.
@@ -384,16 +464,41 @@ pub fn validate_server(server: &McpServer) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Inputs: config and candidate id that must be unique among other servers. Outputs: Ok or duplicate error.
-pub fn validate_unique_id(
+/// Inputs: config, candidate key. Outputs: Ok, or an error on an empty or duplicate name.
+pub fn validate_key(config: &AppConfig, key: &ApiKey) -> Result<(), ConfigError> {
+    let name = key.name.trim().to_lowercase();
+    if name.is_empty() {
+        return Err(ConfigError::msg("key name is required"));
+    }
+    if config
+        .keys
+        .iter()
+        .any(|k| k.id != key.id && k.name.trim().to_lowercase() == name)
+    {
+        return Err(ConfigError::msg("another key already uses this name"));
+    }
+    Ok(())
+}
+
+/// Inputs: config, candidate server, whether it replaces an existing entry.
+/// Outputs: Ok, or an error on a duplicate id or a name (case-insensitive) used by another server.
+/// Unique names let agents tell accounts of the same connector apart in `list_mcps`.
+pub fn validate_unique(
     config: &AppConfig,
-    id: &str,
+    server: &McpServer,
     replacing: bool,
 ) -> Result<(), ConfigError> {
-    let count = config.servers.iter().filter(|s| s.id == id).count();
-    let allowed = if replacing { 1 } else { 0 };
-    if count > allowed {
+    let count = config.servers.iter().filter(|s| s.id == server.id).count();
+    if count > usize::from(replacing) {
         return Err(ConfigError::msg("duplicate mcp id"));
+    }
+    let name = server.name.trim().to_lowercase();
+    if config
+        .servers
+        .iter()
+        .any(|s| s.id != server.id && s.name.trim().to_lowercase() == name)
+    {
+        return Err(ConfigError::msg("another MCP already uses this name"));
     }
     Ok(())
 }
@@ -524,20 +629,70 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_ids() {
-        let cfg = AppConfig {
-            servers: vec![McpServer {
-                id: "x".into(),
-                name: "x".into(),
-                enabled: true,
-                transport: McpTransport::Stdio {
-                    command: "/bin/true".into(),
-                    args: vec![],
-                    env_keys: vec![],
-                },
-            }],
+    fn rejects_duplicate_ids_and_names() {
+        let server = |id: &str, name: &str| McpServer {
+            id: id.into(),
+            name: name.into(),
+            enabled: true,
+            transport: McpTransport::Stdio {
+                command: "/bin/true".into(),
+                args: vec![],
+                env_keys: vec![],
+            },
         };
-        assert!(validate_unique_id(&cfg, "x", false).is_err());
-        assert!(validate_unique_id(&cfg, "x", true).is_ok());
+        let cfg = AppConfig {
+            servers: vec![server("x", "Plane")],
+            ..Default::default()
+        };
+        assert!(validate_unique(&cfg, &server("x", "Plane"), false).is_err());
+        assert!(validate_unique(&cfg, &server("x", "Plane"), true).is_ok());
+        assert!(validate_unique(&cfg, &server("y", " plane "), false).is_err());
+        assert!(validate_unique(&cfg, &server("y", "Plane 2"), false).is_ok());
+    }
+
+    #[test]
+    fn api_key_scope_modes() {
+        let key = |mode, ids: &[&str]| ApiKey {
+            id: "k".into(),
+            name: "k".into(),
+            mode,
+            mcp_ids: ids.iter().map(|s| s.to_string()).collect(),
+        };
+        assert!(key(KeyMode::Exclude, &[]).allows("a"));
+        assert!(!key(KeyMode::Exclude, &["a"]).allows("a"));
+        assert!(key(KeyMode::Exclude, &["a"]).allows("b"));
+        assert!(key(KeyMode::Include, &["a"]).allows("a"));
+        assert!(!key(KeyMode::Include, &["a"]).allows("b"));
+        assert!(!key(KeyMode::Include, &[]).allows("a"));
+    }
+
+    #[test]
+    fn legacy_config_gets_default_key() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("servers.json"), r#"{"servers":[]}"#).unwrap();
+        let cfg = load_config(dir.path()).unwrap();
+        assert_eq!(cfg.keys.len(), 1);
+        assert_eq!(cfg.keys[0].id, DEFAULT_KEY_ID);
+        assert!(cfg.keys[0].allows("anything"));
+        assert_eq!(cfg.find_key("default").unwrap().name, "Default");
+        assert_eq!(cfg.find_key(" DEFAULT ").unwrap().id, DEFAULT_KEY_ID);
+        assert!(cfg.find_key("work").is_none());
+    }
+
+    #[test]
+    fn key_tokens_are_namespaced_and_names_unique() {
+        assert_eq!(token_user(DEFAULT_KEY_ID), TOKEN_USER);
+        assert_eq!(token_user("a:b"), "key:a%3Ab");
+        let cfg = load_config(tempfile::tempdir().unwrap().path()).unwrap();
+        let key = |id: &str, name: &str| ApiKey {
+            id: id.into(),
+            name: name.into(),
+            mode: KeyMode::Exclude,
+            mcp_ids: vec![],
+        };
+        assert!(validate_key(&cfg, &key("x", " default ")).is_err());
+        assert!(validate_key(&cfg, &key("x", "  ")).is_err());
+        assert!(validate_key(&cfg, &key("x", "Work")).is_ok());
+        assert!(validate_key(&cfg, &key(DEFAULT_KEY_ID, "Default")).is_ok());
     }
 }

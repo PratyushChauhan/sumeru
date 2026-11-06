@@ -26,7 +26,7 @@ npm run tauri dev
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.2.13`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. When `NPM_TOKEN` is set as a repo secret, the workflow publishes the [`sumeru-mcp`](packages/cli) npm package.
+- Push to `main`: `.github/workflows/release.yml` builds macOS (arm64 + x64) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.3.0`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. When `NPM_TOKEN` is set as a repo secret, the workflow publishes the [`sumeru-mcp`](packages/cli) npm package.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
@@ -60,11 +60,11 @@ Overrides: `SUMERU_BINARY` (local binary path), `SUMERU_VERSION`, `SUMERU_CACHE_
 The funnel starts automatically on launch and keeps running in the system tray when you close the window. Open from the tray to configure; Quit from the tray to stop the endpoint. Optionally enable **Run at system startup** (starts hidden in the tray). Pause/Resume in the UI if needed:
 
 - URL: `http://127.0.0.1:7341/mcp`
-- Auth: `Authorization: Bearer <token>` (shown/copied from the UI)
+- Auth: `Authorization: Bearer <token>` — one token per API key (**Configure → Keys**). Each key is either *all MCPs except…* or *only…*; the gateway enforces it ([Scoped API keys](docs/cookbook/scoped-keys.md))
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
-**Configure → Connect an agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`).
+**Configure → Connect an agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`). Pick an API key to scope it, and **This repo** for a committable project config that reads the token from an env var instead of containing it.
 
 Example client config:
 
@@ -105,6 +105,8 @@ Sumeru exposes exactly three MCP tools:
 | `list_mcp_tools` | `mcp_id` | upstream tool names, descriptions, schemas |
 | `execute_mcp_tool` | `mcp_id`, `tool_name`, `arguments?` | upstream `CallToolResult` |
 
+All three are scoped by the request's API key: MCPs outside it are not listed and return `unknown mcp_id`. Stdio sessions pick a key with `sumeru mcp-stdio --key <name>` (default: the Default key).
+
 ## Upstream MCP formats
 
 - **stdio**: paste a command (e.g. `npx`) plus args/env secrets (keychain)
@@ -123,7 +125,7 @@ Plain HTTP is allowed only for loopback hosts. Remote URLs must use HTTPS.
 
 ## Marketplace
 
-The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that support DCR (`src/lib/marketplace.json`). **Install** runs browser OAuth first and only saves the MCP if sign-in succeeds. Non-DCR or stdio servers stay on **Configure → Add MCP**.
+The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that support DCR (`src/lib/marketplace.json`). **Install** runs browser OAuth first and only saves the MCP if sign-in succeeds. **Add account** connects another account of an installed provider (asks for a unique name and forces a fresh provider login). Non-DCR or stdio servers stay on **Configure → Add MCP**.
 
 ## Lifecycle
 
@@ -135,12 +137,12 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 ## Storage
 
 - Config: app config dir `/sumeru/servers.json`
-- Secrets: OS keychain service `sumeru` (endpoint token, env/header/bearer values, OAuth client + refresh tokens)
+- Secrets: OS keychain service `sumeru` (API key tokens — Default key: `endpoint-token`, others: `key:<id>` — plus env/header/bearer values and OAuth client + refresh tokens)
 
 ## Security notes
 
 - Funnel binds only to `127.0.0.1`
-- Endpoint bearer token is required
+- A bearer token for an API key is required; each key only reaches the MCPs in its scope
 - Stdio commands are argv-based (no shell strings)
 - Upstream tool metadata/output is untrusted data
 
