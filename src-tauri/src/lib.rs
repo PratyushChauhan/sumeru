@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use config::{
     delete_oauth_secrets, delete_secrets, prune_secrets, redact, rotate_endpoint_token,
-    save_config, store_secrets, validate_server, validate_unique_id, McpServer, McpTransport,
+    save_config, store_secrets, validate_server, validate_unique, McpServer, McpTransport,
     SecretMap,
 };
 use gateway::{endpoint_url, AppInner};
@@ -182,7 +182,7 @@ async fn upsert_server(
 
     let mut staged = state.0.config.read().await.clone();
     let previous = staged.servers.iter().find(|s| s.id == id).cloned();
-    validate_unique_id(&staged, &id, previous.is_some()).map_err(|e| e.to_string())?;
+    validate_unique(&staged, &server, previous.is_some()).map_err(|e| e.to_string())?;
     if let Some(existing) = staged.servers.iter_mut().find(|s| s.id == id) {
         *existing = server.clone();
     } else {
@@ -313,6 +313,7 @@ async fn probe_mcp_auth(url: String, id: Option<String>) -> Result<oauth::AuthPr
 }
 
 /// Inputs: MCP URL, mcp id, optional client credentials. Outputs: unit after browser sign-in.
+/// Forces a fresh provider login when another MCP already uses the URL (another account).
 #[tauri::command]
 async fn start_mcp_oauth(
     state: tauri::State<'_, State>,
@@ -321,7 +322,10 @@ async fn start_mcp_oauth(
     client_id: Option<String>,
     client_secret: Option<String>,
 ) -> Result<(), String> {
-    oauth::authorize(&url, &id, client_id, client_secret).await?;
+    let fresh_login = state.0.config.read().await.servers.iter().any(|s| {
+        s.id != id && matches!(&s.transport, McpTransport::Http { url: u, .. } if *u == url)
+    });
+    oauth::authorize(&url, &id, client_id, client_secret, fresh_login).await?;
     state.0.pool.invalidate(&id).await;
     Ok(())
 }

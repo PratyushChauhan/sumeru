@@ -384,16 +384,25 @@ pub fn validate_server(server: &McpServer) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Inputs: config and candidate id that must be unique among other servers. Outputs: Ok or duplicate error.
-pub fn validate_unique_id(
+/// Inputs: config, candidate server, whether it replaces an existing entry.
+/// Outputs: Ok, or an error on a duplicate id or a name (case-insensitive) used by another server.
+/// Unique names let agents tell accounts of the same connector apart in `list_mcps`.
+pub fn validate_unique(
     config: &AppConfig,
-    id: &str,
+    server: &McpServer,
     replacing: bool,
 ) -> Result<(), ConfigError> {
-    let count = config.servers.iter().filter(|s| s.id == id).count();
-    let allowed = if replacing { 1 } else { 0 };
-    if count > allowed {
+    let count = config.servers.iter().filter(|s| s.id == server.id).count();
+    if count > usize::from(replacing) {
         return Err(ConfigError::msg("duplicate mcp id"));
+    }
+    let name = server.name.trim().to_lowercase();
+    if config
+        .servers
+        .iter()
+        .any(|s| s.id != server.id && s.name.trim().to_lowercase() == name)
+    {
+        return Err(ConfigError::msg("another MCP already uses this name"));
     }
     Ok(())
 }
@@ -524,20 +533,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_ids() {
-        let cfg = AppConfig {
-            servers: vec![McpServer {
-                id: "x".into(),
-                name: "x".into(),
-                enabled: true,
-                transport: McpTransport::Stdio {
-                    command: "/bin/true".into(),
-                    args: vec![],
-                    env_keys: vec![],
-                },
-            }],
+    fn rejects_duplicate_ids_and_names() {
+        let server = |id: &str, name: &str| McpServer {
+            id: id.into(),
+            name: name.into(),
+            enabled: true,
+            transport: McpTransport::Stdio {
+                command: "/bin/true".into(),
+                args: vec![],
+                env_keys: vec![],
+            },
         };
-        assert!(validate_unique_id(&cfg, "x", false).is_err());
-        assert!(validate_unique_id(&cfg, "x", true).is_ok());
+        let cfg = AppConfig {
+            servers: vec![server("x", "Plane")],
+        };
+        assert!(validate_unique(&cfg, &server("x", "Plane"), false).is_err());
+        assert!(validate_unique(&cfg, &server("x", "Plane"), true).is_ok());
+        assert!(validate_unique(&cfg, &server("y", " plane "), false).is_err());
+        assert!(validate_unique(&cfg, &server("y", "Plane 2"), false).is_ok());
     }
 }

@@ -25,6 +25,17 @@ const servers = [
       has_bearer: true,
     },
   },
+  {
+    id: "fathom-demo-2",
+    name: "Fathom · personal",
+    enabled: true,
+    transport: {
+      kind: "http",
+      url: "https://api.fathom.ai/mcp",
+      header_keys: [],
+      has_bearer: true,
+    },
+  },
 ];
 
 /**
@@ -120,7 +131,7 @@ await page.getByText("running").waitFor();
 await shot(page, "configure.png", { clipApp: true });
 
 await page.getByRole("tab", { name: "Marketplace" }).click();
-await page.getByText("Installed").waitFor();
+await page.getByRole("button", { name: "Add account" }).waitFor();
 await shot(page, "marketplace.png", { clipApp: true });
 
 await page.getByRole("tab", { name: "Configure" }).click();
