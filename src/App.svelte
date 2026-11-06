@@ -11,7 +11,7 @@
   import Marketplace from "./components/Marketplace.svelte";
 
   let status = $state({ running: false, endpoint: "" });
-  let token = $state("");
+  let keys = $state([]);
   let servers = $state([]);
   let autostart = $state(false);
   let editorOpen = $state(false);
@@ -19,18 +19,18 @@
   let tab = $state("configure");
 
   /**
-   * Inputs: none. Outputs: refreshed status, token, servers, autostart.
+   * Inputs: none. Outputs: refreshed status, API keys, servers, autostart.
    */
   async function refresh() {
-    const [nextStatus, nextToken, nextServers, nextAutostart] =
+    const [nextStatus, nextKeys, nextServers, nextAutostart] =
       await Promise.all([
         api.getStatus(),
-        api.getToken(),
+        api.listKeys(),
         api.listServers(),
         api.getAutostart(),
       ]);
     status = nextStatus;
-    token = nextToken;
+    keys = nextKeys;
     servers = nextServers;
     autostart = !!nextAutostart;
   }
@@ -116,7 +116,7 @@
     <Tabs.Trigger value="marketplace">Marketplace</Tabs.Trigger>
   </Tabs.List>
   <Tabs.Content value="configure" class="grid gap-4">
-    <Endpoint {status} {token} bind:autostart {refresh} />
+    <Endpoint {status} {keys} {servers} bind:autostart {refresh} />
     <ServerList {servers} {onEdit} {refresh} />
   </Tabs.Content>
   <Tabs.Content value="marketplace">

@@ -60,7 +60,7 @@ Overrides: `SUMERU_BINARY` (local binary path), `SUMERU_VERSION`, `SUMERU_CACHE_
 The funnel starts automatically on launch and keeps running in the system tray when you close the window. Open from the tray to configure; Quit from the tray to stop the endpoint. Optionally enable **Run at system startup** (starts hidden in the tray). Pause/Resume in the UI if needed:
 
 - URL: `http://127.0.0.1:7341/mcp`
-- Auth: `Authorization: Bearer <token>` (shown/copied from the UI)
+- Auth: `Authorization: Bearer <token>` — one token per API key (**Configure → Keys**). Each key is either *all MCPs except…* or *only…*; the gateway enforces it ([Scoped API keys](docs/cookbook/scoped-keys.md))
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
@@ -105,6 +105,8 @@ Sumeru exposes exactly three MCP tools:
 | `list_mcp_tools` | `mcp_id` | upstream tool names, descriptions, schemas |
 | `execute_mcp_tool` | `mcp_id`, `tool_name`, `arguments?` | upstream `CallToolResult` |
 
+All three are scoped by the request's API key: MCPs outside it are not listed and return `unknown mcp_id`. Stdio sessions pick a key with `sumeru mcp-stdio --key <name>` (default: the Default key).
+
 ## Upstream MCP formats
 
 - **stdio**: paste a command (e.g. `npx`) plus args/env secrets (keychain)
@@ -135,12 +137,12 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 ## Storage
 
 - Config: app config dir `/sumeru/servers.json`
-- Secrets: OS keychain service `sumeru` (endpoint token, env/header/bearer values, OAuth client + refresh tokens)
+- Secrets: OS keychain service `sumeru` (API key tokens — Default key: `endpoint-token`, others: `key:<id>` — plus env/header/bearer values and OAuth client + refresh tokens)
 
 ## Security notes
 
 - Funnel binds only to `127.0.0.1`
-- Endpoint bearer token is required
+- A bearer token for an API key is required; each key only reaches the MCPs in its scope
 - Stdio commands are argv-based (no shell strings)
 - Upstream tool metadata/output is untrusted data
 

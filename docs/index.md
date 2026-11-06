@@ -7,7 +7,7 @@ Sumeru is a local desktop MCP funnel. Add N upstream MCP servers (stdio commands
 ## What you get
 
 - One endpoint at `http://127.0.0.1:7341/mcp`
-- Bearer auth (token shown in Configure)
+- Bearer auth with scoped API keys (each key reaches only the MCPs you pick)
 - Three gateway tools that list and call upstream MCPs
 - System tray lifecycle (close window to hide; Quit from tray to stop)
 - Optional launch at login (starts hidden in the tray)
