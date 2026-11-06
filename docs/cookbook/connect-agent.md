@@ -22,6 +22,22 @@ The preview masks the token; **Copy** and **Add to …** use the selected key's 
 
 After you [rotate a key](./rotate-token.md), repeat these steps for that key — agents keep the old token until you do.
 
+## Per-repo setup
+
+Switch **Connect an agent** to **This repo** to get a config you can commit. It never contains the token; instead it reads it from an environment variable named after the key (`SUMERU_TOKEN` for Default, `SUMERU_<KEY>_TOKEN` otherwise):
+
+| Agent | Repo config | Token from |
+| --- | --- | --- |
+| Claude Code | `claude mcp add --scope project …` → `.mcp.json` | `${SUMERU_…_TOKEN}` |
+| Codex | `.codex/config.toml` (trusted projects) | `bearer_token_env_var` |
+| Cursor | `.cursor/mcp.json` | `${env:SUMERU_…_TOKEN}` |
+| VS Code | `.vscode/mcp.json` | a password prompt (`inputs`), stored by VS Code — no env var needed |
+| Gemini CLI | `gemini mcp add --scope project …` → `.gemini/settings.json` | `${SUMERU_…_TOKEN}` |
+
+Windsurf has no project-level MCP config, so it is user-scope only.
+
+Then set the variable where the agent runs — **Copy export** gives `export SUMERU_…_TOKEN=<token>`. Put it in a gitignored `.envrc` ([direnv](https://direnv.net/)) or your shell profile. Apps launched from the Dock may not see shell variables; start them from a terminal. Pair this with a [scoped key](./scoped-keys.md) so each repo reaches only its MCPs.
+
 ## Stdio alternative
 
 If you prefer stdio instead of HTTP (JSON agents):

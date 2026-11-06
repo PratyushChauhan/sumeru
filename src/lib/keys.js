@@ -30,3 +30,10 @@ export function agentServerName(key) {
   const slug = key.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `sumeru-${slug || key.id.slice(0, 8)}`;
 }
+
+/**
+ * Inputs: API key. Outputs: env var repo-level agent configs read its token from
+ * (`SUMERU_TOKEN` for Default, `SUMERU_<KEY>_TOKEN` otherwise).
+ */
+export const tokenEnvVar = (key) =>
+  `${agentServerName(key).toUpperCase().replace(/-/g, "_")}_TOKEN`;
