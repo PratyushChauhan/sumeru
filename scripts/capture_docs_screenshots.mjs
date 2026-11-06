@@ -72,7 +72,10 @@ await page.addInitScript(
     const state = {
       running: true,
       endpoint: "http://127.0.0.1:7341/mcp",
-      token,
+      keys: [
+        { id: "default", name: "Default", mode: "exclude", mcp_ids: [], token },
+        { id: "work", name: "Work repo", mode: "include", mcp_ids: ["fathom-demo"], token },
+      ],
       servers,
       autostart: false,
     };
@@ -88,8 +91,8 @@ await page.addInitScript(
         switch (cmd) {
           case "get_status":
             return { running: state.running, endpoint: state.endpoint };
-          case "get_token":
-            return state.token;
+          case "list_keys":
+            return state.keys;
           case "list_servers":
             return state.servers;
           case "get_autostart":
@@ -97,13 +100,15 @@ await page.addInitScript(
           case "set_autostart":
           case "start_funnel":
           case "stop_funnel":
-          case "rotate_token":
+          case "upsert_key":
+          case "remove_key":
           case "start_mcp_oauth":
           case "upsert_server":
           case "remove_server":
           case "open_url":
           case "open_docs":
             return;
+          case "rotate_key":
           case "test_server":
           case "test_draft":
           case "mcp_stdio_command":

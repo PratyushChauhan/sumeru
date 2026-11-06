@@ -1,7 +1,7 @@
 # Connect your agent
 
 1. Start Sumeru and confirm the badge shows **running**
-2. On **Configure → Connect an agent**, pick your agent
+2. On **Configure → Connect an agent**, pick the key (when you have more than one — see [Scoped API keys](./scoped-keys.md)) and your agent
 
 ![Configure tab with running badge, endpoint URL, and bearer token](/images/configure.png)
 
@@ -16,11 +16,11 @@
 | Gemini CLI | **Copy** the `gemini mcp add …` command and run it in a terminal |
 | Windsurf | **Copy** the snippet into `~/.codeium/windsurf/mcp_config.json` |
 
-The preview masks the token unless **Show** is on; **Copy** and **Add to …** always use the real token. Agents store it in plain text in their config, and the CLI commands also land in your shell history — rotate the token if either leaks.
+The preview masks the token; **Copy** and **Add to …** use the selected key's real token. Non-default keys install as `sumeru-<key name>`, so one agent can hold several. Agents store it in plain text in their config, and the CLI commands also land in your shell history — rotate the token if either leaks.
 
 4. Reload MCP servers in your agent and call `list_mcps` to confirm your upstreams appear
 
-After you [rotate the token](./rotate-token.md), repeat these steps — agents keep the old token until you do.
+After you [rotate a key](./rotate-token.md), repeat these steps for that key — agents keep the old token until you do.
 
 ## Stdio alternative
 

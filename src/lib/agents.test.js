@@ -51,4 +51,14 @@ describe("agent install recipes", () => {
     );
     assert.match(byId("gemini").text, /^gemini mcp add --scope user --transport http sumeru http\S+ --header /);
   });
+
+  it("installs under the per-key server name", () => {
+    const work = agentInstalls(URL_, TOKEN, "sumeru-work");
+    for (const a of work) assert.ok(a.text.includes("sumeru-work"), a.id);
+    const find = (id) => work.find((a) => a.id === id);
+    assert.match(find("claude-code").text, /remove --scope user sumeru-work .* --scope user sumeru-work http/);
+    assert.match(find("codex").text, /^\[mcp_servers\.sumeru-work\]/);
+    assert.equal(new URL(find("cursor").link).searchParams.get("name"), "sumeru-work");
+    assert.equal(JSON.parse(decodeURIComponent(find("vscode").link.split("?")[1])).name, "sumeru-work");
+  });
 });

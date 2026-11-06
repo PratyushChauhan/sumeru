@@ -13,6 +13,11 @@ describe("resolveNativeArgs", () => {
       "mcp-stdio",
       "--foo",
     ]);
+    assert.deepEqual(resolveNativeArgs(["mcp-stdio", "--key", "work repo"]), [
+      "mcp-stdio",
+      "--key",
+      "work repo",
+    ]);
   });
 
   it("strips gui for desktop launch", () => {
