@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { agentServerName, keyAllows, scopeIds, scopeLabel } from "./keys.js";
+import { agentServerName, keyAllows, scopeIds, scopeLabel, tokenEnvVar } from "./keys.js";
 
 const servers = [{ id: "a" }, { id: "b" }, { id: "c" }];
 
@@ -29,5 +29,10 @@ describe("API key helpers", () => {
     assert.equal(agentServerName({ id: "default", name: "Default" }), "sumeru");
     assert.equal(agentServerName({ id: "x", name: "Work · Acme!" }), "sumeru-work-acme");
     assert.equal(agentServerName({ id: "1234567890", name: "···" }), "sumeru-12345678");
+  });
+
+  it("names the env var repo configs read", () => {
+    assert.equal(tokenEnvVar({ id: "default", name: "Default" }), "SUMERU_TOKEN");
+    assert.equal(tokenEnvVar({ id: "x", name: "Work repo" }), "SUMERU_WORK_REPO_TOKEN");
   });
 });

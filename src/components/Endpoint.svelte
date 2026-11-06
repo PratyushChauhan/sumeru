@@ -13,7 +13,7 @@
   import { Separator } from "$lib/components/ui/separator/index.js";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { agentInstalls } from "$lib/agents.js";
-  import { agentServerName, scopeLabel } from "$lib/keys.js";
+  import { agentServerName, scopeLabel, tokenEnvVar } from "$lib/keys.js";
   import KeyEditor from "./KeyEditor.svelte";
 
   let {
@@ -26,18 +26,26 @@
 
   let agent = $state("claude-code");
   let keyId = $state("default");
+  let scope = $state("user");
   let editorOpen = $state(false);
   let editing = $state(null);
 
   const selected = $derived(keys.find((k) => k.id === keyId) ?? keys[0]);
+  /** Repo scope: env var the committed config reads the token from ("" = user scope). */
+  const env = $derived(scope === "repo" ? tokenEnvVar(selected) : "");
+  const agents = $derived(agentInstalls("", "", "sumeru", env));
+  $effect(() => {
+    if (!agents.some((a) => a.id === agent)) agent = agents[0].id;
+  });
 
   /**
-   * Inputs: bearer token or placeholder. Outputs: selected agent recipe for the selected key.
+   * Inputs: bearer token or placeholder. Outputs: selected agent recipe for the selected key
+   * and scope (falls back to the first agent when the scope lacks it, e.g. Windsurf in a repo).
    */
-  const install = (t) =>
-    agentInstalls(status?.endpoint ?? "", t, agentServerName(selected)).find(
-      (a) => a.id === agent,
-    );
+  const install = (t) => {
+    const list = agentInstalls(status?.endpoint ?? "", t, agentServerName(selected), env);
+    return list.find((a) => a.id === agent) ?? list[0];
+  };
   const shown = $derived(install("<TOKEN>"));
 
   /**
@@ -147,18 +155,26 @@
     </div>
     <div class="grid gap-2">
       <Label>Connect an agent</Label>
-      {#if keys.length > 1}
-        <Tabs.Root bind:value={keyId}>
+      <div class="flex gap-2 flex-wrap">
+        {#if keys.length > 1}
+          <Tabs.Root bind:value={keyId}>
+            <Tabs.List>
+              {#each keys as k (k.id)}
+                <Tabs.Trigger value={k.id}>{k.name}</Tabs.Trigger>
+              {/each}
+            </Tabs.List>
+          </Tabs.Root>
+        {/if}
+        <Tabs.Root bind:value={scope}>
           <Tabs.List>
-            {#each keys as k (k.id)}
-              <Tabs.Trigger value={k.id}>{k.name}</Tabs.Trigger>
-            {/each}
+            <Tabs.Trigger value="user">User</Tabs.Trigger>
+            <Tabs.Trigger value="repo">This repo</Tabs.Trigger>
           </Tabs.List>
         </Tabs.Root>
-      {/if}
+      </div>
       <Tabs.Root bind:value={agent}>
         <Tabs.List>
-          {#each agentInstalls("", "") as a (a.id)}
+          {#each agents as a (a.id)}
             <Tabs.Trigger value={a.id}>{a.name}</Tabs.Trigger>
           {/each}
         </Tabs.List>
@@ -173,6 +189,21 @@
         {/if}
         <Button variant="outline" onclick={() => copy(install(selected?.token ?? "").text)}>Copy</Button>
       </div>
+      {#if env && shown.id !== "vscode"}
+        <p class="text-muted-foreground text-xs m-0">
+          The repo config never holds the token — set <code>{env}</code> where the agent runs, e.g.
+          a gitignored <code>.envrc</code> (direnv) or your shell profile. Apps opened from the Dock
+          may not see shell variables; start them from a terminal.
+        </p>
+        <pre
+          class="m-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-background p-3 font-mono text-xs leading-relaxed text-foreground ring-1 ring-foreground/10"
+        >{`export ${env}=<TOKEN>`}</pre>
+        <Button
+          variant="outline"
+          class="w-fit"
+          onclick={() => copy(`export ${env}=${selected?.token ?? ""}`)}>Copy export</Button
+        >
+      {/if}
     </div>
     <Separator />
     <div class="flex items-center justify-between gap-4">
