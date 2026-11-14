@@ -1,6 +1,9 @@
 # Getting started
 
-1. Launch Sumeru (install from [GitHub Releases](https://github.com/PratyushChauhan/sumeru/releases), or `npm i -g sumeru-mcp && sumeru gui`). The funnel starts automatically and keeps running in the tray when you close the window.
+1. Install and launch Sumeru. The funnel starts automatically and keeps running in the tray when you close the window.
+   - **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **sumeru** to **Applications**. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**.
+   - **Linux**: AppImage, `.deb` or `.rpm` from the same release.
+   - **npm**: `npm i -g sumeru-mcp && sumeru gui` ([CLI](./cli.md)).
 2. Open **Configure**. The endpoint URL and the **Default** API key are there; add more keys to scope agents to specific MCPs ([Scoped API keys](./cookbook/scoped-keys.md)).
 
 ![Configure tab with running badge, endpoint URL, and bearer token](/images/configure.png)
