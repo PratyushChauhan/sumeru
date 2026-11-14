@@ -28,3 +28,7 @@ docs/.vitepress/dist
 
 # Rust / Tauri
 src-tauri/target
+
+# Native macOS app (scripts/build-macos-app.sh, swift build)
+dist-macos
+macos/.build
