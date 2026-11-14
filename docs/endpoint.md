@@ -1,7 +1,7 @@
 # Endpoint
 
 - **URL:** `http://127.0.0.1:7341/mcp`
-- **Auth:** `Authorization: Bearer <token>` (copy from Configure)
+- **Auth:** `Authorization: Bearer <token>` — one token per API key (**Configure → Keys**); each key reaches only its MCPs ([Scoped API keys](./cookbook/scoped-keys.md))
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
@@ -32,6 +32,8 @@ Sumeru exposes exactly three MCP tools:
 | `list_mcp_tools` | `mcp_id` | upstream tool names, descriptions, schemas |
 | `execute_mcp_tool` | `mcp_id`, `tool_name`, `arguments?` | upstream `CallToolResult` |
 
+All three are scoped by the request's API key: MCPs outside it are not listed and return `unknown mcp_id`.
+
 ## Lifecycle
 
 - Upstream clients connect lazily on first `list_mcp_tools` / `execute_mcp_tool`
@@ -41,7 +43,7 @@ Sumeru exposes exactly three MCP tools:
 ## Storage and security
 
 - Config: app config dir `/sumeru/servers.json`
-- Secrets: OS keychain service `sumeru`
+- Secrets: OS keychain service `sumeru` (Default key token: `endpoint-token`; other keys: `key:<id>`)
 - Funnel binds only to `127.0.0.1`
 - Stdio commands are argv-based (no shell strings)
 - Upstream tool metadata/output is untrusted data

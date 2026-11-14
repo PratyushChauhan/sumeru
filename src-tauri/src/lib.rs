@@ -7,9 +7,9 @@ mod pool;
 use std::sync::Arc;
 
 use config::{
-    delete_oauth_secrets, delete_secrets, prune_secrets, redact, rotate_endpoint_token,
-    save_config, store_secrets, validate_server, validate_unique_id, McpServer, McpTransport,
-    SecretMap,
+    delete_oauth_secrets, delete_secrets, prune_secrets, redact, save_config, store_secrets,
+    validate_key, validate_server, validate_unique, ApiKey, KeyMode, McpServer, McpTransport,
+    SecretMap, DEFAULT_KEY_ID,
 };
 use gateway::{endpoint_url, AppInner};
 use serde::Serialize;
@@ -46,8 +46,16 @@ fn mcp_stdio_command() -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Inputs: none. Outputs: runs gateway tools over MCP stdio until EOF.
+/// Inputs: process args (`--key <name|id>` picks the API key scope; default: Default key).
+/// Outputs: runs gateway tools over MCP stdio until EOF.
 pub fn run_mcp_stdio() {
+    let args: Vec<String> = std::env::args().collect();
+    let key_arg = args
+        .iter()
+        .position(|a| a == "--key")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_KEY_ID.into());
     let dir = match sumeru_config_dir() {
         Ok(dir) => dir,
         Err(err) => {
@@ -71,7 +79,12 @@ pub fn run_mcp_stdio() {
                 std::process::exit(1);
             }
         };
-        if let Err(err) = gateway::serve_stdio(inner).await {
+        let key = inner.config.read().await.find_key(&key_arg).map(|k| k.id.clone());
+        let Some(key) = key else {
+            eprintln!("sumeru mcp-stdio: unknown key {key_arg:?}");
+            std::process::exit(1);
+        };
+        if let Err(err) = gateway::serve_stdio(inner, key).await {
             eprintln!("sumeru mcp-stdio: {err}");
             std::process::exit(1);
         }
@@ -125,8 +138,7 @@ async fn get_status(state: tauri::State<'_, State>) -> Result<StatusDto, String>
     let running = if local {
         true
     } else {
-        let token = state.0.token.read().await.clone();
-        gateway::existing_endpoint_healthy(&token).await
+        gateway::existing_endpoint_healthy(&state.0.default_token().await).await
     };
     Ok(StatusDto {
         running,
@@ -182,7 +194,7 @@ async fn upsert_server(
 
     let mut staged = state.0.config.read().await.clone();
     let previous = staged.servers.iter().find(|s| s.id == id).cloned();
-    validate_unique_id(&staged, &id, previous.is_some()).map_err(|e| e.to_string())?;
+    validate_unique(&staged, &server, previous.is_some()).map_err(|e| e.to_string())?;
     if let Some(existing) = staged.servers.iter_mut().find(|s| s.id == id) {
         *existing = server.clone();
     } else {
@@ -208,6 +220,9 @@ async fn remove_server(state: tauri::State<'_, State>, id: String) -> Result<(),
         return Err("unknown mcp".into());
     };
     let removed = staged.servers.remove(pos);
+    for key in &mut staged.keys {
+        key.mcp_ids.retain(|m| *m != id);
+    }
     save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
     {
         let mut cfg = state.0.config.write().await;
@@ -241,17 +256,77 @@ async fn stop_funnel(state: tauri::State<'_, State>) -> Result<(), String> {
     gateway::stop(state.0.clone()).await
 }
 
-/// Inputs: none. Outputs: current bearer token for client config.
-#[tauri::command]
-async fn get_token(state: tauri::State<'_, State>) -> Result<String, String> {
-    Ok(state.0.token.read().await.clone())
+#[derive(Serialize)]
+struct KeyDto {
+    #[serde(flatten)]
+    key: ApiKey,
+    token: String,
 }
 
-/// Inputs: none. Outputs: newly rotated bearer token.
+/// Inputs: app state. Outputs: API keys with their bearer tokens (for agent setup).
 #[tauri::command]
-async fn rotate_token(state: tauri::State<'_, State>) -> Result<String, String> {
-    let token = rotate_endpoint_token().map_err(|e| e.to_string())?;
-    *state.0.token.write().await = token.clone();
+async fn list_keys(state: tauri::State<'_, State>) -> Result<Vec<KeyDto>, String> {
+    let tokens = state.0.tokens.read().await;
+    let token = |id: &str| tokens.iter().find(|(k, _)| k == id).map(|(_, t)| t.clone());
+    let cfg = state.0.config.read().await;
+    Ok(cfg
+        .keys
+        .iter()
+        .map(|k| KeyDto {
+            key: k.clone(),
+            token: token(&k.id).unwrap_or_default(),
+        })
+        .collect())
+}
+
+/// Inputs: optional id, name, scope mode, MCP ids. Outputs: saved key id (new keys get a token).
+#[tauri::command]
+async fn upsert_key(
+    state: tauri::State<'_, State>,
+    id: Option<String>,
+    name: String,
+    mode: KeyMode,
+    mcp_ids: Vec<String>,
+) -> Result<String, String> {
+    let key = ApiKey {
+        id: id
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| Uuid::new_v4().to_string()),
+        name: name.trim().into(),
+        mode,
+        mcp_ids,
+    };
+    let mut staged = state.0.config.read().await.clone();
+    validate_key(&staged, &key).map_err(|e| e.to_string())?;
+    match staged.keys.iter_mut().find(|k| k.id == key.id) {
+        Some(existing) => *existing = key.clone(),
+        None => staged.keys.push(key.clone()),
+    }
+    save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
+    *state.0.config.write().await = staged;
+    state.0.reload_tokens().await?;
+    Ok(key.id)
+}
+
+/// Inputs: key id. Outputs: unit after deleting the key and its token (Default stays).
+#[tauri::command]
+async fn remove_key(state: tauri::State<'_, State>, id: String) -> Result<(), String> {
+    if id == DEFAULT_KEY_ID {
+        return Err("the Default key cannot be deleted".into());
+    }
+    let mut staged = state.0.config.read().await.clone();
+    staged.keys.retain(|k| k.id != id);
+    save_config(&state.0.dir, &staged).map_err(|e| e.to_string())?;
+    *state.0.config.write().await = staged;
+    config::delete_key_token(&id).map_err(|e| e.to_string())?;
+    state.0.reload_tokens().await
+}
+
+/// Inputs: key id. Outputs: the key's new token (the old one stops working immediately).
+#[tauri::command]
+async fn rotate_key(state: tauri::State<'_, State>, id: String) -> Result<String, String> {
+    let token = config::rotate_key_token(&id).map_err(|e| e.to_string())?;
+    state.0.reload_tokens().await?;
     Ok(token)
 }
 
@@ -313,6 +388,7 @@ async fn probe_mcp_auth(url: String, id: Option<String>) -> Result<oauth::AuthPr
 }
 
 /// Inputs: MCP URL, mcp id, optional client credentials. Outputs: unit after browser sign-in.
+/// Forces a fresh provider login when another MCP already uses the URL (another account).
 #[tauri::command]
 async fn start_mcp_oauth(
     state: tauri::State<'_, State>,
@@ -321,7 +397,10 @@ async fn start_mcp_oauth(
     client_id: Option<String>,
     client_secret: Option<String>,
 ) -> Result<(), String> {
-    oauth::authorize(&url, &id, client_id, client_secret).await?;
+    let fresh_login = state.0.config.read().await.servers.iter().any(|s| {
+        s.id != id && matches!(&s.transport, McpTransport::Http { url: u, .. } if *u == url)
+    });
+    oauth::authorize(&url, &id, client_id, client_secret, fresh_login).await?;
     state.0.pool.invalidate(&id).await;
     Ok(())
 }
@@ -426,8 +505,10 @@ pub fn run() {
             remove_server,
             start_funnel,
             stop_funnel,
-            get_token,
-            rotate_token,
+            list_keys,
+            upsert_key,
+            remove_key,
+            rotate_key,
             get_autostart,
             set_autostart,
             open_url,

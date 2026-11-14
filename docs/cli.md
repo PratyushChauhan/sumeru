@@ -6,6 +6,7 @@ Install the npm launcher (downloads the matching portable binary on first run):
 npm i -g sumeru-mcp
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
+sumeru mcp-stdio --key "work repo"  # scope to an API key (default: Default)
 sumeru gui         # desktop UI
 sumeru gui --hidden  # tray-only start
 ```

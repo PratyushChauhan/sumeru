@@ -8,23 +8,31 @@ export function listMarketplaceEntries() {
 }
 
 /**
- * Inputs: catalog entry, configured servers. Outputs: matching server or null.
+ * Inputs: catalog entry, configured servers. Outputs: HTTP servers on the entry URL (one per account).
  */
-export function findInstalledServer(entry, servers) {
+export function installedServers(entry, servers) {
   const url = entry?.url?.trim();
-  if (!url) return null;
-  return (
-    (servers || []).find(
-      (s) => s?.transport?.kind === "http" && s.transport.url === url,
-    ) || null
+  if (!url) return [];
+  return (servers || []).filter(
+    (s) => s?.transport?.kind === "http" && s.transport.url === url,
   );
 }
 
 /**
- * Inputs: catalog entry, configured servers. Outputs: true when URL is installed.
+ * Inputs: configured servers, candidate name. Outputs: true when a server already uses it (case-insensitive).
  */
-export function isInstalled(entry, servers) {
-  return !!findInstalledServer(entry, servers);
+export function nameTaken(servers, name) {
+  const n = (name || "").trim().toLowerCase();
+  return (servers || []).some((s) => s?.name?.trim().toLowerCase() === n);
+}
+
+/**
+ * Inputs: catalog entry, configured servers. Outputs: first unused "<name> <n>" for another account.
+ */
+export function nextAccountName(entry, servers) {
+  let n = installedServers(entry, servers).length + 1;
+  while (nameTaken(servers, `${entry.name} ${n}`)) n++;
+  return `${entry.name} ${n}`;
 }
 
 /**

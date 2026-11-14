@@ -23,7 +23,7 @@ use tokio_stream::StreamExt;
 use rmcp::{
     handler::server::wrapper::Parameters,
     model::{
-        CallToolResult, Implementation, ListToolsResult, PaginatedRequestParams,
+        CallToolResult, Extensions, Implementation, ListToolsResult, PaginatedRequestParams,
         ServerCapabilities, ServerInfo,
     },
     schemars, tool, tool_handler, tool_router,
@@ -42,7 +42,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    config::{self, redact, AppConfig, McpServer, BIND_ADDR, ENDPOINT_URL},
+    config::{self, redact, ApiKey, AppConfig, McpServer, BIND_ADDR, DEFAULT_KEY_ID, ENDPOINT_URL},
     pool::SharedPool,
 };
 
@@ -51,7 +51,8 @@ pub struct AppInner {
     pub dir: std::path::PathBuf,
     pub config: Arc<RwLock<AppConfig>>,
     pub pool: SharedPool,
-    pub token: Arc<RwLock<String>>,
+    /// (key id, bearer token) for every API key; empty in stdio mode.
+    pub tokens: Arc<RwLock<Vec<(String, String)>>>,
     pub running: Arc<AtomicBool>,
     pub exiting: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<()>>,
@@ -60,17 +61,19 @@ pub struct AppInner {
 }
 
 impl AppInner {
-    /// Inputs: config directory and optional HTTP bearer. Outputs: app state.
-    fn with_token(
-        dir: std::path::PathBuf,
-        token: Option<String>,
-    ) -> Result<Self, config::ConfigError> {
+    /// Inputs: config directory, whether to load key tokens from the keychain. Outputs: app state.
+    fn load(dir: std::path::PathBuf, with_tokens: bool) -> Result<Self, config::ConfigError> {
         let cfg = config::load_config(&dir)?;
+        let tokens = if with_tokens {
+            config::key_tokens(&cfg)?
+        } else {
+            Vec::new()
+        };
         Ok(Self {
             dir,
             config: Arc::new(RwLock::new(cfg)),
             pool: Arc::new(crate::pool::ClientPool::new()),
-            token: Arc::new(RwLock::new(token.unwrap_or_default())),
+            tokens: Arc::new(RwLock::new(tokens)),
             running: Arc::new(AtomicBool::new(false)),
             exiting: Arc::new(AtomicBool::new(false)),
             lifecycle: Arc::new(Mutex::new(())),
@@ -79,14 +82,31 @@ impl AppInner {
         })
     }
 
-    /// Inputs: config directory. Outputs: app state with keyring endpoint token.
+    /// Inputs: config directory. Outputs: app state with every key's keychain token.
     pub fn new(dir: std::path::PathBuf) -> Result<Self, config::ConfigError> {
-        Self::with_token(dir, Some(config::ensure_endpoint_token()?))
+        Self::load(dir, true)
     }
 
-    /// Inputs: config directory. Outputs: app state for stdio (no keyring token).
+    /// Inputs: config directory. Outputs: app state for stdio (no bearer tokens).
     pub fn for_stdio(dir: std::path::PathBuf) -> Result<Self, config::ConfigError> {
-        Self::with_token(dir, None)
+        Self::load(dir, false)
+    }
+
+    /// Inputs: none. Outputs: the Default key's token (used for health probes).
+    pub async fn default_token(&self) -> String {
+        let tokens = self.tokens.read().await;
+        tokens
+            .iter()
+            .find(|(id, _)| id == DEFAULT_KEY_ID)
+            .map(|(_, t)| t.clone())
+            .unwrap_or_default()
+    }
+
+    /// Inputs: none. Outputs: unit after re-reading every key's token (after key edits).
+    pub async fn reload_tokens(&self) -> Result<(), String> {
+        let tokens = config::key_tokens(&*self.config.read().await).map_err(|e| e.to_string())?;
+        *self.tokens.write().await = tokens;
+        Ok(())
     }
 
     /// Inputs: none. Outputs: server matching id, if present.
@@ -104,6 +124,31 @@ impl AppInner {
 #[derive(Clone)]
 struct Gateway {
     app: Arc<AppInner>,
+    /// Key id for stdio sessions (`--key`); HTTP requests carry theirs as a `KeyId` extension.
+    stdio_key: Option<String>,
+}
+
+/// API key id resolved from the request bearer by `auth_middleware`.
+#[derive(Clone)]
+struct KeyId(String);
+
+impl Gateway {
+    /// Inputs: request extensions. Outputs: the API key scoping this request, if it still exists.
+    async fn key(&self, ext: &Extensions) -> Option<ApiKey> {
+        let id = ext
+            .get::<axum::http::request::Parts>()
+            .and_then(|p| p.extensions.get::<KeyId>())
+            .map(|k| k.0.clone())
+            .or_else(|| self.stdio_key.clone())?;
+        let cfg = self.app.config.read().await;
+        cfg.keys.iter().find(|k| k.id == id).cloned()
+    }
+
+    /// Inputs: request extensions, mcp id. Outputs: server when it exists and the key may reach it.
+    async fn scoped(&self, ext: &Extensions, mcp_id: &str) -> Option<McpServer> {
+        let key = self.key(ext).await?;
+        self.app.find(mcp_id).await.filter(|s| key.allows(&s.id))
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -130,13 +175,15 @@ struct McpInfo {
 
 #[tool_router]
 impl Gateway {
-    /// Inputs: none. Outputs: configured MCP summaries.
+    /// Inputs: request extensions (API key). Outputs: summaries of MCPs the key may reach.
     #[tool(description = "List configured MCP servers available through Sumeru")]
-    async fn list_mcps(&self) -> Result<CallToolResult, rmcp::ErrorData> {
+    async fn list_mcps(&self, ext: Extensions) -> Result<CallToolResult, rmcp::ErrorData> {
+        let key = self.key(&ext).await;
         let cfg = self.app.config.read().await;
         let infos: Vec<McpInfo> = cfg
             .servers
             .iter()
+            .filter(|s| key.as_ref().is_some_and(|k| k.allows(&s.id)))
             .map(|s| McpInfo {
                 id: s.id.clone(),
                 name: s.name.clone(),
@@ -152,13 +199,15 @@ impl Gateway {
         Ok(CallToolResult::structured(structured))
     }
 
-    /// Inputs: mcp_id. Outputs: upstream tool names, descriptions, and schemas.
+    /// Inputs: mcp_id, request extensions (API key). Outputs: upstream tool names, descriptions,
+    /// and schemas; MCPs outside the key's scope are reported as unknown.
     #[tool(description = "List tools exposed by a configured MCP server")]
     async fn list_mcp_tools(
         &self,
         Parameters(McpIdArgs { mcp_id }): Parameters<McpIdArgs>,
+        ext: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(server) = self.app.find(&mcp_id).await else {
+        let Some(server) = self.scoped(&ext, &mcp_id).await else {
             return Ok(CallToolResult::structured_error(serde_json::json!({
                 "error": "unknown mcp_id"
             })));
@@ -177,7 +226,8 @@ impl Gateway {
         }
     }
 
-    /// Inputs: mcp_id, tool_name, arguments. Outputs: upstream CallToolResult.
+    /// Inputs: mcp_id, tool_name, arguments, request extensions (API key).
+    /// Outputs: upstream CallToolResult; MCPs outside the key's scope are reported as unknown.
     #[tool(description = "Execute a tool on a configured MCP server")]
     async fn execute_mcp_tool(
         &self,
@@ -186,8 +236,9 @@ impl Gateway {
             tool_name,
             arguments,
         }): Parameters<ExecuteArgs>,
+        ext: Extensions,
     ) -> Result<CallToolResult, rmcp::ErrorData> {
-        let Some(server) = self.app.find(&mcp_id).await else {
+        let Some(server) = self.scoped(&ext, &mcp_id).await else {
             return Ok(CallToolResult::structured_error(serde_json::json!({
                 "error": "unknown mcp_id"
             })));
@@ -266,22 +317,23 @@ fn ct_eq(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-/// Inputs: request headers and expected token. Outputs: true when Authorization matches.
-fn bearer_ok(headers: &HeaderMap, expected: &str) -> bool {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| {
-            v.strip_prefix("Bearer ")
-                .or_else(|| v.strip_prefix("bearer "))
-        })
-        .is_some_and(|t| ct_eq(t, expected))
+/// Inputs: request headers, (key id, token) pairs. Outputs: id of the key whose token matches.
+fn key_for_bearer(headers: &HeaderMap, tokens: &[(String, String)]) -> Option<String> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let presented = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))?;
+    tokens
+        .iter()
+        .find(|(_, t)| ct_eq(presented, t))
+        .map(|(id, _)| id.clone())
 }
 
-/// Inputs: app state and request. Outputs: 403/401 or the downstream response.
+/// Inputs: app state and request. Outputs: 403/401, or the downstream response with the
+/// matched API key attached as a `KeyId` extension for tool handlers.
 async fn auth_middleware(
     axum::extract::State(app): axum::extract::State<Arc<AppInner>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> Response {
     if req.headers().contains_key(header::ORIGIN) {
@@ -291,15 +343,16 @@ async fn auth_middleware(
         )
             .into_response();
     }
-    let token = app.token.read().await.clone();
-    if !bearer_ok(req.headers(), &token) {
+    let key_id = key_for_bearer(req.headers(), &app.tokens.read().await);
+    let Some(key_id) = key_id else {
         return (
             StatusCode::UNAUTHORIZED,
             [(header::WWW_AUTHENTICATE, "Bearer")],
             "unauthorized",
         )
             .into_response();
-    }
+    };
+    req.extensions_mut().insert(KeyId(key_id));
     next.run(req).await
 }
 
@@ -327,7 +380,10 @@ async fn soft_get_sse(req: Request, next: Next) -> Response {
 
 /// Inputs: shared app state and shutdown token. Outputs: HTTP router for MCP traffic.
 fn gateway_router(app: Arc<AppInner>, child: CancellationToken) -> Router {
-    let gateway = Gateway { app: app.clone() };
+    let gateway = Gateway {
+        app: app.clone(),
+        stdio_key: None,
+    };
     let service = StreamableHttpService::new(
         {
             let gateway = gateway.clone();
@@ -405,9 +461,8 @@ pub async fn start(app: Arc<AppInner>) -> Result<(), String> {
     let listener = match TcpListener::bind(BIND_ADDR).await {
         Ok(listener) => listener,
         Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
-            let token = app.token.read().await.clone();
             // External process owns the port — do not mark local `running`.
-            if existing_endpoint_healthy(&token).await {
+            if existing_endpoint_healthy(&app.default_token().await).await {
                 return Ok(());
             }
             return Err(format!(
@@ -456,9 +511,12 @@ pub fn endpoint_url() -> &'static str {
     ENDPOINT_URL
 }
 
-/// Inputs: shared app state. Outputs: Ok(()) after stdio MCP session ends.
-pub async fn serve_stdio(app: Arc<AppInner>) -> Result<(), String> {
-    let gateway = Gateway { app };
+/// Inputs: shared app state, API key id scoping the session. Outputs: Ok(()) after the session ends.
+pub async fn serve_stdio(app: Arc<AppInner>, key_id: String) -> Result<(), String> {
+    let gateway = Gateway {
+        app,
+        stdio_key: Some(key_id),
+    };
     let running = gateway
         .serve(stdio())
         .await
@@ -474,6 +532,7 @@ mod tests {
     use tower::ServiceExt;
 
     const TEST_TOKEN: &str = "test-token";
+    const SCOPED_TOKEN: &str = "scoped-token";
     const PROTOCOL_VERSION: &str = "2025-06-18";
 
     #[test]
@@ -483,8 +542,10 @@ mod tests {
             header::AUTHORIZATION,
             "Bearer secret-token".parse().unwrap(),
         );
-        assert!(bearer_ok(&headers, "secret-token"));
-        assert!(!bearer_ok(&headers, "other"));
+        let key = |t: &str| vec![("k".to_string(), t.to_string())];
+        assert_eq!(key_for_bearer(&headers, &key("secret-token")), Some("k".into()));
+        assert_eq!(key_for_bearer(&headers, &key("other")), None);
+        assert_eq!(key_for_bearer(&HeaderMap::new(), &key("secret-token")), None);
     }
 
     /// Regression: Vec outputSchema is type "array" and panics tool_router at tools/list.
@@ -511,13 +572,18 @@ mod tests {
         assert_eq!(kept.structured_content.unwrap()["ok"], true);
     }
 
-    /// Inputs: app config. Outputs: app state with a fixed bearer token.
+    /// Inputs: app config. Outputs: app state where TEST_TOKEN is the Default key and
+    /// SCOPED_TOKEN is the "scoped" key (keys come from the config).
     fn test_app(config: AppConfig) -> Arc<AppInner> {
+        let tokens = vec![
+            (DEFAULT_KEY_ID.to_string(), TEST_TOKEN.to_string()),
+            ("scoped".to_string(), SCOPED_TOKEN.to_string()),
+        ];
         Arc::new(AppInner {
             dir: tempfile::tempdir().unwrap().keep(),
             config: Arc::new(RwLock::new(config)),
             pool: Arc::new(crate::pool::ClientPool::new()),
-            token: Arc::new(RwLock::new(TEST_TOKEN.into())),
+            tokens: Arc::new(RwLock::new(tokens)),
             running: Arc::new(AtomicBool::new(false)),
             exiting: Arc::new(AtomicBool::new(false)),
             lifecycle: Arc::new(Mutex::new(())),
@@ -526,9 +592,11 @@ mod tests {
         })
     }
 
-    /// Inputs: router, session, request id, method, params. Outputs: status, headers, JSON body.
+    /// Inputs: router, bearer token, session, request id, method, params.
+    /// Outputs: status, headers, JSON body.
     async fn post_rpc(
         router: &Router,
+        token: &str,
         session: Option<&str>,
         id: Option<u64>,
         method: &str,
@@ -545,7 +613,7 @@ mod tests {
             .method("POST")
             .uri("/mcp")
             .header(header::HOST, "127.0.0.1:7341")
-            .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .header(header::ACCEPT, "application/json, text/event-stream")
             .header(header::CONTENT_TYPE, "application/json")
             .header("MCP-Protocol-Version", PROTOCOL_VERSION);
@@ -565,9 +633,9 @@ mod tests {
         let json = if body.is_empty() {
             serde_json::Value::Null
         } else {
-            serde_json::from_slice(&body).unwrap_or_else(|e| {
-                panic!("status {status}: {e}: {}", String::from_utf8_lossy(&body))
-            })
+            // Non-JSON bodies (e.g. 401 "unauthorized") come back as a string.
+            serde_json::from_slice(&body)
+                .unwrap_or_else(|_| String::from_utf8_lossy(&body).into_owned().into())
         };
         (status, headers, json)
     }
@@ -594,12 +662,13 @@ mod tests {
 
     #[tokio::test]
     async fn tools_list_returns_gateway_tools_over_http() {
-        let app = test_app(AppConfig::default());
+        let app = test_app(config::load_config(&tempfile::tempdir().unwrap().keep()).unwrap());
         let ct = CancellationToken::new();
         let router = gateway_router(app, ct.child_token());
 
         let initialize = post_rpc(
             &router,
+            TEST_TOKEN,
             None,
             Some(1),
             "initialize",
@@ -620,14 +689,14 @@ mod tests {
         );
 
         let initialized =
-            post_rpc(&router, None, None, "notifications/initialized", None).await;
+            post_rpc(&router, TEST_TOKEN, None, None, "notifications/initialized", None).await;
         assert_eq!(initialized.0, StatusCode::ACCEPTED);
 
         // Soft GET returns 200 SSE keep-alive.
         assert_eq!(get_mcp_status(&router, None).await, StatusCode::OK);
 
         let started = std::time::Instant::now();
-        let list = post_rpc(&router, None, Some(2), "tools/list", None).await;
+        let list = post_rpc(&router, TEST_TOKEN, None, Some(2), "tools/list", None).await;
         assert_eq!(list.0, StatusCode::OK);
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(
@@ -644,11 +713,12 @@ mod tests {
             .collect();
         assert_eq!(names, ["execute_mcp_tool", "list_mcp_tools", "list_mcps"]);
 
-        let ping = post_rpc(&router, None, Some(3), "ping", None).await;
+        let ping = post_rpc(&router, TEST_TOKEN, None, Some(3), "ping", None).await;
         assert_eq!(ping.0, StatusCode::OK);
 
         let call = post_rpc(
             &router,
+            TEST_TOKEN,
             None,
             Some(4),
             "tools/call",
@@ -659,5 +729,78 @@ mod tests {
         assert_ne!(call.2["result"]["isError"], true);
 
         ct.cancel();
+    }
+
+    /// Inputs: none. Outputs: config with stdio MCPs `a` and `b`, the Default key, and a
+    /// "scoped" key that may only reach `a`.
+    fn scoped_config() -> AppConfig {
+        let server = |id: &str| McpServer {
+            id: id.into(),
+            name: id.into(),
+            enabled: true,
+            transport: config::McpTransport::Stdio {
+                command: "/bin/true".into(),
+                args: vec![],
+                env_keys: vec![],
+            },
+        };
+        let mut cfg = config::load_config(&tempfile::tempdir().unwrap().keep()).unwrap();
+        cfg.servers = vec![server("a"), server("b")];
+        cfg.keys.push(ApiKey {
+            id: "scoped".into(),
+            name: "Scoped".into(),
+            mode: config::KeyMode::Include,
+            mcp_ids: vec!["a".into()],
+        });
+        cfg
+    }
+
+    /// Inputs: router, token, tool name, arguments. Outputs: HTTP status and tool result JSON.
+    async fn call_tool(
+        router: &Router,
+        token: &str,
+        name: &str,
+        args: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let params = serde_json::json!({ "name": name, "arguments": args });
+        let (status, _, body) = post_rpc(router, token, None, Some(9), "tools/call", Some(params)).await;
+        (status, body["result"]["structuredContent"].clone())
+    }
+
+    #[tokio::test]
+    async fn scoped_key_filters_and_blocks() {
+        let ct = CancellationToken::new();
+        let router = gateway_router(test_app(scoped_config()), ct.child_token());
+        let ids = |v: serde_json::Value| -> Vec<String> {
+            v["mcps"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap().to_string()).collect()
+        };
+
+        let (_, all) = call_tool(&router, TEST_TOKEN, "list_mcps", serde_json::json!({})).await;
+        assert_eq!(ids(all), ["a", "b"]);
+        let (_, scoped) = call_tool(&router, SCOPED_TOKEN, "list_mcps", serde_json::json!({})).await;
+        assert_eq!(ids(scoped), ["a"]);
+
+        let blocked = serde_json::json!({ "mcp_id": "b", "tool_name": "x" });
+        let (_, tools) = call_tool(&router, SCOPED_TOKEN, "list_mcp_tools", blocked.clone()).await;
+        assert_eq!(tools["error"], "unknown mcp_id");
+        let (_, exec) = call_tool(&router, SCOPED_TOKEN, "execute_mcp_tool", blocked).await;
+        assert_eq!(exec["error"], "unknown mcp_id");
+
+        let (status, _) = call_tool(&router, "wrong-token", "list_mcps", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        ct.cancel();
+    }
+
+    #[tokio::test]
+    async fn stdio_key_scopes_without_http_extensions() {
+        let gateway = Gateway {
+            app: test_app(scoped_config()),
+            stdio_key: Some("scoped".into()),
+        };
+        let ext = Extensions::new();
+        assert!(gateway.scoped(&ext, "a").await.is_some());
+        assert!(gateway.scoped(&ext, "b").await.is_none());
+        let unscoped = Gateway { stdio_key: None, ..gateway };
+        assert!(unscoped.scoped(&ext, "a").await.is_none());
     }
 }

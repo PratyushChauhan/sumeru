@@ -1,19 +1,23 @@
 <!--
   @component
   Inputs: servers list, refresh callback.
-  Outputs: DCR marketplace browse + one-click install.
+  Outputs: DCR marketplace browse, one-click install, and extra accounts per provider.
 -->
 <script>
   import * as api from "$lib/api.js";
   import {
     filterMarketplaceEntries,
-    isInstalled,
+    installedServers,
     listMarketplaceEntries,
+    nameTaken,
+    nextAccountName,
   } from "$lib/marketplace.js";
   import { marketplaceIcon } from "$lib/marketplace-icons.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { Label } from "$lib/components/ui/label/index.js";
   import * as Card from "$lib/components/ui/card/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
   import ProviderIcon from "./ProviderIcon.svelte";
 
   let { servers = [], refresh } = $props();
@@ -23,28 +27,34 @@
   let installingId = $state("");
   let msg = $state("");
   let msgTone = $state("");
-  /**
-   * Inputs: none.
-   * Outputs: URLs saved via upsert even if parent refresh fails.
-   */
-  let justInstalledUrls = $state([]);
+  let addOpen = $state(false);
+  let adding = $state(null);
+  let accountName = $state("");
 
   const visible = $derived(filterMarketplaceEntries(entries, query));
 
   /**
-   * Inputs: catalog entry. Outputs: true when configured or just installed.
+   * Inputs: catalog entry. Outputs: account-name dialog prefilled with the next free name.
    */
-  function shownInstalled(entry) {
-    return (
-      isInstalled(entry, servers) || justInstalledUrls.includes(entry.url)
-    );
+  function onAddAccount(entry) {
+    adding = entry;
+    accountName = nextAccountName(entry, servers);
+    msg = "";
+    addOpen = true;
   }
 
   /**
-   * Inputs: catalog entry. Outputs: OAuth-first install or error message.
+   * Inputs: catalog entry, server name.
+   * Outputs: OAuth-first install, or the account dialog when the name is taken (checked before sign-in).
    */
-  async function onInstall(entry) {
-    if (installingId || shownInstalled(entry)) return;
+  async function onInstall(entry, name) {
+    if (installingId) return;
+    if (nameTaken(servers, name)) {
+      onAddAccount(entry);
+      msg = `Another MCP is already named “${name}”. Pick a different name.`;
+      msgTone = "err";
+      return;
+    }
     installingId = entry.id;
     msg = "Opening browser sign-in…";
     msgTone = "";
@@ -59,7 +69,7 @@
       await api.startMcpOauth({ url: entry.url, id });
       await api.upsertServer({
         id,
-        name: entry.name,
+        name,
         enabled: true,
         transport: {
           kind: "http",
@@ -69,13 +79,13 @@
         },
         secrets: {},
       });
-      justInstalledUrls = [...justInstalledUrls, entry.url];
-      msg = `${entry.name} installed`;
+      addOpen = false;
+      msg = `${name} installed`;
       msgTone = "ok";
       try {
         await refresh();
       } catch {
-        /* keep success; justInstalledUrls blocks duplicate install */
+        /* keep success; a stale list only re-offers Install */
       }
     } catch (e) {
       msg = String(e);
@@ -120,7 +130,7 @@
         </li>
       {:else}
         {#each visible as entry (entry.id)}
-          {@const installed = shownInstalled(entry)}
+          {@const count = installedServers(entry, servers).length}
           {@const busy = installingId === entry.id}
           <li
             class="flex items-center gap-2 rounded-lg border bg-card px-2 py-1.5"
@@ -134,13 +144,23 @@
                 {entry.description}
               </div>
             </div>
-            {#if installed}
-              <Button variant="outline" size="xs" disabled>Installed</Button>
+            {#if count}
+              <span class="text-muted-foreground text-[11px] whitespace-nowrap">
+                {count} installed
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={!!installingId}
+                onclick={() => onAddAccount(entry)}
+              >
+                {busy ? "…" : "Add account"}
+              </Button>
             {:else}
               <Button
                 size="xs"
                 disabled={!!installingId}
-                onclick={() => onInstall(entry)}
+                onclick={() => onInstall(entry, entry.name)}
               >
                 {busy ? "…" : "Install"}
               </Button>
@@ -151,3 +171,39 @@
     </ul>
   </Card.Content>
 </Card.Root>
+
+<Dialog.Root bind:open={addOpen}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>Add another {adding?.name} account</Dialog.Title>
+    </Dialog.Header>
+    <form
+      class="grid gap-3"
+      onsubmit={(e) => {
+        e.preventDefault();
+        onInstall(adding, accountName.trim());
+      }}
+    >
+      <div class="grid gap-2">
+        <Label for="account-name">Account name</Label>
+        <Input id="account-name" bind:value={accountName} required />
+        <p class="text-muted-foreground text-xs m-0">
+          Agents see this name in <code>list_mcps</code>. Sumeru asks
+          {adding?.name} for a fresh login; if you land in the same account,
+          sign out of {adding?.name} in your browser first.
+        </p>
+      </div>
+      {#if msgTone === "err"}
+        <p role="alert" class="text-destructive text-sm m-0">{msg}</p>
+      {/if}
+      <Dialog.Footer class="gap-2 sm:justify-end">
+        <Button type="button" variant="ghost" onclick={() => (addOpen = false)}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={!!installingId}>
+          {installingId ? "…" : "Sign in"}
+        </Button>
+      </Dialog.Footer>
+    </form>
+  </Dialog.Content>
+</Dialog.Root>

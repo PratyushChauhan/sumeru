@@ -156,12 +156,14 @@ pub async fn probe(url: &str, mcp_id: Option<&str>) -> Result<AuthProbe, String>
     })
 }
 
-/// Inputs: MCP URL, mcp id, optional client credentials. Outputs: Ok after tokens are stored.
+/// Inputs: MCP URL, mcp id, optional client credentials, fresh_login (force provider login).
+/// Outputs: Ok after tokens are stored.
 pub async fn authorize(
     url: &str,
     mcp_id: &str,
     client_id: Option<String>,
     client_secret: Option<String>,
+    fresh_login: bool,
 ) -> Result<(), String> {
     config::validate_http_url(url).map_err(|e| e.to_string())?;
     if mcp_id.trim().is_empty() {
@@ -215,6 +217,7 @@ pub async fn authorize(
         &challenge,
         &state,
         url,
+        fresh_login,
     )?;
 
     let (tx, rx) = oneshot::channel();
@@ -473,7 +476,8 @@ async fn register_client(endpoint: &str) -> Result<(String, Option<String>), Str
 
 /// Build the browser authorization URL (PKCE S256 + resource indicator).
 ///
-/// Inputs: authorize endpoint, client id, scopes, PKCE challenge, state, resource.
+/// Inputs: authorize endpoint, client id, scopes, PKCE challenge, state, resource,
+/// fresh_login (adds `prompt=login` so another account can sign in).
 /// Outputs: browser authorization URL.
 fn build_authorize_url(
     endpoint: &str,
@@ -482,6 +486,7 @@ fn build_authorize_url(
     challenge: &str,
     state: &str,
     resource: &str,
+    fresh_login: bool,
 ) -> Result<String, String> {
     let mut url = Url::parse(endpoint).map_err(|e| e.to_string())?;
     {
@@ -496,6 +501,9 @@ fn build_authorize_url(
             q.append_pair("scope", &scopes.join(" "));
         }
         q.append_pair("resource", resource);
+        if fresh_login {
+            q.append_pair("prompt", "login");
+        }
     }
     Ok(url.to_string())
 }
@@ -692,8 +700,14 @@ mod tests {
             &["none".into(), "client_secret_post".into()],
             false
         ));
-        assert!(client_secret_required(&["client_secret_post".into()], false));
-        assert!(!client_secret_required(&["client_secret_post".into()], true));
+        assert!(client_secret_required(
+            &["client_secret_post".into()],
+            false
+        ));
+        assert!(!client_secret_required(
+            &["client_secret_post".into()],
+            true
+        ));
     }
 
     #[test]
@@ -736,6 +750,7 @@ mod tests {
             "challenge",
             "state123",
             "https://mcp.slack.com/mcp",
+            false,
         )
         .unwrap();
         let parsed = Url::parse(&url).unwrap();
@@ -745,5 +760,26 @@ mod tests {
         assert_eq!(pairs.get("resource").unwrap(), "https://mcp.slack.com/mcp");
         assert_eq!(pairs.get("scope").unwrap(), "chat:write");
         assert_eq!(pairs.get("redirect_uri").unwrap(), REDIRECT_URI);
+        assert!(!pairs.contains_key("prompt"));
+    }
+
+    #[test]
+    fn authorize_url_forces_login_for_another_account() {
+        let url = build_authorize_url(
+            "https://a.example/authorize",
+            "cid",
+            &[],
+            "c",
+            "s",
+            "https://a.example/mcp",
+            true,
+        )
+        .unwrap();
+        let pairs: HashMap<_, _> = Url::parse(&url)
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+        assert_eq!(pairs.get("prompt").unwrap(), "login");
     }
 }

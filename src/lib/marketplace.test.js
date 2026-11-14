@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   filterMarketplaceEntries,
-  findInstalledServer,
-  isInstalled,
+  installedServers,
   listMarketplaceEntries,
   marketplaceHost,
   marketplaceIdForUrl,
+  nameTaken,
+  nextAccountName,
 } from "./marketplace.js";
 
 describe("marketplace helpers", () => {
@@ -29,17 +30,21 @@ describe("marketplace helpers", () => {
     );
   });
 
-  it("matches installed servers by HTTP URL", () => {
-    const entry = { url: "https://api.fathom.ai/mcp" };
-    const servers = [
-      {
-        id: "1",
-        transport: { kind: "http", url: "https://api.fathom.ai/mcp" },
-      },
-    ];
-    assert.equal(isInstalled(entry, servers), true);
-    assert.equal(findInstalledServer(entry, servers)?.id, "1");
-    assert.equal(isInstalled(entry, []), false);
+  it("lists every installed account for an entry URL", () => {
+    const entry = { name: "Plane", url: "https://mcp.plane.so/http/mcp" };
+    const http = (id, name) => ({
+      id,
+      name,
+      transport: { kind: "http", url: entry.url },
+    });
+    const servers = [http("1", "Plane"), http("2", "Plane 2"), { id: "3", name: "x", transport: { kind: "stdio" } }];
+    assert.deepEqual(installedServers(entry, servers).map((s) => s.id), ["1", "2"]);
+    assert.deepEqual(installedServers(entry, []), []);
+    assert.equal(nextAccountName(entry, [http("1", "Plane")]), "Plane 2");
+    assert.equal(nextAccountName(entry, servers), "Plane 3");
+    assert.equal(nextAccountName(entry, [http("1", "Plane"), { id: "9", name: "plane 2" }]), "Plane 3");
+    assert.equal(nameTaken(servers, " plane 2 "), true);
+    assert.equal(nameTaken(servers, "Plane · acme"), false);
   });
 
   it("filters by name description or url", () => {
