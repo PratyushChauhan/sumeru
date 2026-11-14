@@ -17,7 +17,7 @@ Formerly **funnelit**. Local desktop MCP funnel. Add N upstream MCP servers (std
 
 ## Install
 
-- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **sumeru** to **Applications**. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**.
+- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **sumeru** to **Applications**. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. If it still won't open, run `xattr -dr com.apple.quarantine /Applications/sumeru.app` in Terminal. On first launch and after updates, macOS may ask to let **sumeru** use its keychain item; enter your password and click **Always Allow** (the endpoint starts once you answer).
 - **Linux**: AppImage, `.deb` or `.rpm` from the same release.
 - **npm**: `npm i -g sumeru-mcp && sumeru gui` ([npm CLI](#npm-cli)).
 
