@@ -11,3 +11,14 @@ export function resolveNativeArgs(argv) {
   }
   return argv;
 }
+
+/**
+ * Inputs: argv after `sumeru`, platform (default `process.platform`).
+ * Outputs: `["open", args]` to launch the native Sumeru.app for `gui` on macOS (the darwin
+ * binary is headless), else null (run the native binary as usual).
+ */
+export function guiCommand(argv, platform = process.platform) {
+  if (platform !== "darwin" || argv[0] !== "gui") return null;
+  const rest = argv.slice(1);
+  return ["open", ["-b", "com.sumeru.app", ...(rest.length ? ["--args", ...rest] : [])]];
+}

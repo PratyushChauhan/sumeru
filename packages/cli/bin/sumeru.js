@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { resolveNativeArgs } from "../lib/args.js";
+import { guiCommand, resolveNativeArgs } from "../lib/args.js";
 import { runDoctor } from "../lib/doctor.js";
 import { ensureBinary } from "../lib/download.js";
 import { packageVersion, platformKey } from "../lib/platform.js";
@@ -18,6 +18,16 @@ async function main(argv) {
     const { ok, lines } = await runDoctor();
     for (const line of lines) process.stdout.write(`${line}\n`);
     process.exitCode = ok ? 0 : 1;
+    return;
+  }
+
+  const app = guiCommand(argv);
+  if (app) {
+    const child = spawn(...app, { stdio: "inherit" });
+    child.on("exit", (code) => {
+      if (code) console.error("sumeru: install Sumeru.app from https://github.com/PratyushChauhan/sumeru/releases/latest");
+      process.exit(code ?? 1);
+    });
     return;
   }
 

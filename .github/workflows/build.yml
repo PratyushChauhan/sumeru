@@ -13,7 +13,6 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: --target universal-apple-darwin
             artifact: macos-universal
           - platform: ubuntu-22.04
             args: ""
@@ -44,7 +43,14 @@ jobs:
 
       - run: npm ci
 
+      - name: Build the native macOS app and run Swift tests
+        if: matrix.platform == 'macos-latest'
+        run: |
+          scripts/test-macos.sh
+          scripts/build-macos-app.sh dist-macos
+
       - uses: tauri-apps/tauri-action@v1
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -63,6 +69,7 @@ jobs:
         with:
           name: sumeru-${{ matrix.artifact }}
           path: |
+            dist-macos/*.dmg
             src-tauri/target/**/release/bundle/**
             src-tauri/target/**/release/sumeru
             src-tauri/target/**/release/sumeru.exe
