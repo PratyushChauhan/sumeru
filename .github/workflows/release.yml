@@ -109,6 +109,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # npm trusted publishing (OIDC): no NPM_TOKEN
     steps:
       - uses: actions/checkout@v4
 
@@ -125,11 +126,11 @@ jobs:
 
       - name: Publish npm package
         working-directory: packages/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN not set; skip npm publish (manual publish OK)"
+          VERSION=$(jq -r .version package.json)
+          if curl -fs -o /dev/null "https://registry.npmjs.org/sumeru-mcp/${VERSION}"; then
+            echo "sumeru-mcp@${VERSION} already on npm; skip"
             exit 0
           fi
+          npm --version
           npm publish --access public
