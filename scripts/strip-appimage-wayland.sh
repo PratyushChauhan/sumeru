@@ -44,7 +44,8 @@ case "$(uname -m)" in
   *) AT_ARCH="$(uname -m)" ;;
 esac
 
-TOOL="appimagetool-${AT_ARCH}.AppImage"
+# Keep the tool out of the bundle dir: release.yml uploads the first *.AppImage there.
+TOOL="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/appimagetool-${AT_ARCH}.AppImage"
 if [[ ! -x "$TOOL" ]]; then
   curl -fsSL \
     "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${AT_ARCH}.AppImage" \
@@ -52,6 +53,6 @@ if [[ ! -x "$TOOL" ]]; then
   chmod +x "$TOOL"
 fi
 
-ARCH="$AT_ARCH" APPIMAGE_EXTRACT_AND_RUN=1 ./"$TOOL" squashfs-root "$APPIMAGE"
+ARCH="$AT_ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" squashfs-root "$APPIMAGE"
 rm -rf squashfs-root
 echo "Repacked $APPIMAGE without bundled Wayland libraries."
