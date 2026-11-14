@@ -54,6 +54,7 @@ pub struct AppInner {
     /// (key id, bearer token) for every API key; empty in stdio mode.
     pub tokens: Arc<RwLock<Vec<(String, String)>>>,
     pub running: Arc<AtomicBool>,
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))] // set by the Tauri exit handler
     pub exiting: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<()>>,
     shutdown: Arc<RwLock<Option<CancellationToken>>>,

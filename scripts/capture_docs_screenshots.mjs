@@ -87,7 +87,9 @@ await page.addInitScript(
       transformCallback: () => 0,
       unregisterCallback: () => {},
       convertFileSrc: (p) => p,
-      invoke: async (cmd) => {
+      // App commands arrive as `api` { method, params }; window/autostart/docs stay direct.
+      invoke: async (name, args) => {
+        const cmd = name === "api" ? args.method : name;
         switch (cmd) {
           case "get_status":
             return { running: state.running, endpoint: state.endpoint };
