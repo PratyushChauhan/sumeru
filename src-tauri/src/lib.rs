@@ -72,7 +72,7 @@ pub fn run_mcp_stdio() {
         .build()
         .expect("tokio runtime");
     rt.block_on(async move {
-        let inner = match AppInner::for_stdio(dir) {
+        let inner = match AppInner::new(dir) {
             Ok(inner) => Arc::new(inner),
             Err(err) => {
                 eprintln!("sumeru mcp-stdio: {err}");
@@ -456,8 +456,13 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let inner = Arc::new(AppInner::new(dir).map_err(|e| e.to_string())?);
             app.manage(State(inner.clone()));
+            // Keychain reads can prompt; do them here, not on the main thread, so the window shows.
             tauri::async_runtime::spawn(async move {
-                if let Err(err) = gateway::start(inner).await {
+                let started = match inner.reload_tokens().await {
+                    Ok(()) => gateway::start(inner).await,
+                    Err(err) => Err(err),
+                };
+                if let Err(err) = started {
                     eprintln!("sumeru auto-start failed: {err}");
                 }
             });
