@@ -32,7 +32,7 @@ npm run tauri dev
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds macOS (one ad-hoc signed universal DMG for Apple Silicon and Intel) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.3.1`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
+- Push to `main`: `.github/workflows/release.yml` builds macOS (one ad-hoc signed universal DMG for Apple Silicon and Intel) and Linux and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.3.2`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
