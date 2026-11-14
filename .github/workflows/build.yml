@@ -13,11 +13,8 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            artifact: macos-aarch64
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            artifact: macos-x86_64
+            args: --target universal-apple-darwin
+            artifact: macos-universal
           - platform: ubuntu-22.04
             args: ""
             artifact: linux-x64

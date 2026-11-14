@@ -16,17 +16,13 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            binary: src-tauri/target/aarch64-apple-darwin/release/sumeru
-            cli_suffix: darwin-arm64
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            binary: src-tauri/target/x86_64-apple-darwin/release/sumeru
-            cli_suffix: darwin-x64
+            args: --target universal-apple-darwin
+            binary: src-tauri/target/universal-apple-darwin/release/sumeru
+            cli_suffixes: darwin-arm64 darwin-x64
           - platform: ubuntu-22.04
             args: ""
             binary: src-tauri/target/release/sumeru
-            cli_suffix: linux-x64
+            cli_suffixes: linux-x64
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -77,32 +73,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload portable CLI binary
+      - name: Upload portable CLI binaries
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           VERSION=$(jq -r .version src-tauri/tauri.conf.json)
-          TAG="v${VERSION}"
-          NAME="sumeru-v${VERSION}-${{ matrix.cli_suffix }}"
-          mkdir -p dist-cli
-          cp "${{ matrix.binary }}" "dist-cli/${NAME}"
-          chmod +x "dist-cli/${NAME}"
-          if command -v strip >/dev/null; then
-            strip "dist-cli/${NAME}" || true
-            if command -v codesign >/dev/null; then
-              codesign --force --sign - "dist-cli/${NAME}" || true
-            fi
-          fi
-          (
-            cd dist-cli
-            if command -v sha256sum >/dev/null; then
-              sha256sum "${NAME}" > "${NAME}.sha256"
-            else
-              shasum -a 256 "${NAME}" > "${NAME}.sha256"
-            fi
-          )
-          gh release upload "${TAG}" "dist-cli/${NAME}" "dist-cli/${NAME}.sha256" --clobber
+          BIN="$PWD/${{ matrix.binary }}"
+          mkdir -p dist-cli && cd dist-cli
+          # macOS builds one universal binary; split it so npm users download only their arch.
+          for SUFFIX in ${{ matrix.cli_suffixes }}; do
+            NAME="sumeru-v${VERSION}-${SUFFIX}"
+            case "$SUFFIX" in
+              darwin-arm64) lipo "$BIN" -thin arm64 -output "$NAME" ;;
+              darwin-x64) lipo "$BIN" -thin x86_64 -output "$NAME" ;;
+              *) cp "$BIN" "$NAME" ;;
+            esac
+            chmod +x "$NAME"
+            strip "$NAME" || true
+            if command -v codesign >/dev/null; then codesign --force --sign - "$NAME" || true; fi
+            if command -v sha256sum >/dev/null; then sha256sum "$NAME" > "$NAME.sha256"; else shasum -a 256 "$NAME" > "$NAME.sha256"; fi
+            gh release upload "v${VERSION}" "$NAME" "$NAME.sha256" --clobber
+          done
 
   publish-npm:
     needs: release
