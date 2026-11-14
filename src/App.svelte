@@ -70,10 +70,11 @@
 
   onMount(() => {
     (async () => {
-      for (let i = 0; i < 25; i++) {
+      // Up to 2 min: startup waits on the keychain (a prompt on first launch or after updates).
+      for (let i = 0; i < 480; i++) {
         await refresh();
         if (status.running) break;
-        await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 250));
       }
     })().catch((e) => {
       console.error(e);

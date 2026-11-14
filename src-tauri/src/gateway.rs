@@ -61,35 +61,20 @@ pub struct AppInner {
 }
 
 impl AppInner {
-    /// Inputs: config directory, whether to load key tokens from the keychain. Outputs: app state.
-    fn load(dir: std::path::PathBuf, with_tokens: bool) -> Result<Self, config::ConfigError> {
-        let cfg = config::load_config(&dir)?;
-        let tokens = if with_tokens {
-            config::key_tokens(&cfg)?
-        } else {
-            Vec::new()
-        };
+    /// Inputs: config directory. Outputs: app state with no bearer tokens yet. The GUI calls
+    /// `reload_tokens` off the main thread (a keychain prompt can block); stdio never needs them.
+    pub fn new(dir: std::path::PathBuf) -> Result<Self, config::ConfigError> {
         Ok(Self {
+            config: Arc::new(RwLock::new(config::load_config(&dir)?)),
             dir,
-            config: Arc::new(RwLock::new(cfg)),
             pool: Arc::new(crate::pool::ClientPool::new()),
-            tokens: Arc::new(RwLock::new(tokens)),
+            tokens: Arc::new(RwLock::new(Vec::new())),
             running: Arc::new(AtomicBool::new(false)),
             exiting: Arc::new(AtomicBool::new(false)),
             lifecycle: Arc::new(Mutex::new(())),
             shutdown: Arc::new(RwLock::new(None)),
             server_task: Arc::new(RwLock::new(None)),
         })
-    }
-
-    /// Inputs: config directory. Outputs: app state with every key's keychain token.
-    pub fn new(dir: std::path::PathBuf) -> Result<Self, config::ConfigError> {
-        Self::load(dir, true)
-    }
-
-    /// Inputs: config directory. Outputs: app state for stdio (no bearer tokens).
-    pub fn for_stdio(dir: std::path::PathBuf) -> Result<Self, config::ConfigError> {
-        Self::load(dir, false)
     }
 
     /// Inputs: none. Outputs: the Default key's token (used for health probes).
@@ -102,9 +87,14 @@ impl AppInner {
             .unwrap_or_default()
     }
 
-    /// Inputs: none. Outputs: unit after re-reading every key's token (after key edits).
+    /// Inputs: none. Outputs: unit after re-reading every key's token (at startup, after key edits).
+    /// Runs on a blocking thread without holding the config lock, so a keychain prompt waits alone.
     pub async fn reload_tokens(&self) -> Result<(), String> {
-        let tokens = config::key_tokens(&*self.config.read().await).map_err(|e| e.to_string())?;
+        let cfg = self.config.read().await.clone();
+        let tokens = tokio::task::spawn_blocking(move || config::key_tokens(&cfg))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
         *self.tokens.write().await = tokens;
         Ok(())
     }
