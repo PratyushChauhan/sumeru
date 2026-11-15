@@ -127,6 +127,32 @@ struct GeneralView: View {
 }
 
 /// Inputs: Marketplace id, display name. Outputs: provider icon, or an initial badge.
+/// One app's MCPs as an expandable row (icon, name, detail line, optional switch for the whole app).
+/// Which apps are expanded is remembered across launches.
+struct AppGroup<Content: View>: View {
+    let group: ServerGroup
+    let detail: String
+    var isOn: Binding<Bool>? = nil
+    @ViewBuilder let content: Content
+    @AppStorage("openGroups") private var open = ""
+
+    var body: some View {
+        DisclosureGroup(isExpanded: Binding(get: { open.split(separator: ",").contains(Substring(group.id)) }, set: { on in
+            let rest = open.split(separator: ",").map(String.init).filter { $0 != group.id }
+            open = (on ? rest + [group.id] : rest).joined(separator: ",")
+        })) { content } label: {
+            let info = HStack(spacing: 10) {
+                ProviderIcon(id: group.id, name: group.name)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(.vertical, 2)
+            if let isOn { Toggle(isOn: isOn) { info } } else { info }
+        }
+    }
+}
+
 struct ProviderIcon: View {
     let id: String
     let name: String

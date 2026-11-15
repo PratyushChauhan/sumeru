@@ -9,7 +9,6 @@ import plane from "../assets/marketplace/plane.png";
 import render from "../assets/marketplace/render.svg";
 import sentry from "../assets/marketplace/sentry.svg";
 import stripe from "../assets/marketplace/stripe.svg";
-import { marketplaceIdForUrl } from "./marketplace.js";
 
 const icons = {
   canva,
@@ -30,11 +29,4 @@ const icons = {
  */
 export function marketplaceIcon(id) {
   return icons[id] || "";
-}
-
-/**
- * Inputs: MCP URL. Outputs: bundled provider icon URL or empty string.
- */
-export function providerIconForUrl(url) {
-  return marketplaceIcon(marketplaceIdForUrl(url));
 }

@@ -125,6 +125,29 @@ let servers = ["a", "b", "c"].map { Server(id: $0, name: $0, enabled: true, tran
         #expect(nameTaken(one, " fathom "))
     }
 
+    // Mirrors the serverGroups test in marketplace.test.js.
+    @Test func groupsByApp() throws {
+        let file = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../src/lib/marketplace.json")
+        let catalog = try decodeMarketplace(Data(contentsOf: file))
+        let http = { (id: String, name: String, url: String, on: Bool) in
+            Server(id: id, name: name, enabled: on, transport: .http(url: url, headerKeys: [], hasBearer: true))
+        }
+        let servers = [
+            http("a", "doppl", "https://mcp.render.com/mcp", true),
+            Server(id: "b", name: "fs", enabled: true, transport: .stdio(command: "npx", args: [], envKeys: [])),
+            http("c", "vinci", "https://mcp.render.com/mcp", false),
+            http("d", "Sentry-vinci", "https://mcp.sentry.dev/other", true),
+            http("e", "Custom", "https://example.com/mcp", true),
+            http("f", "Local box", "https://local/mcp", true),
+        ]
+        #expect(serverGroups(servers, catalog).map { [$0.id, $0.name] + $0.servers.map(\.id) } == [
+            ["render", "Render", "a", "c"], ["local", "Local commands", "b"],
+            ["sentry", "Sentry", "d"], ["host:example.com", "example.com", "e"], ["host:local", "local", "f"],
+        ])
+        #expect(groupSummary(Array(servers.prefix(3))) == "3 MCPs · 1 off")
+        #expect(groupSummary(Array(servers.prefix(1))) == "1 MCP")
+    }
+
     @Test func bundledCatalogDecodes() throws {
         let file = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../src/lib/marketplace.json")
         let entries = try decodeMarketplace(Data(contentsOf: file))

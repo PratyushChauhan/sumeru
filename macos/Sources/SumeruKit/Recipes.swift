@@ -168,6 +168,34 @@ public func installedServers(_ entry: MarketplaceEntry, _ servers: [Server]) -> 
     servers.filter { $0.transport.url == entry.url }
 }
 
+/// MCPs that belong to one app: a catalog provider, a URL host, or local commands.
+public struct ServerGroup: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let name: String
+    public var servers: [Server]
+}
+
+/// Inputs: servers, catalog. Outputs: servers grouped by app (catalog entry by URL then host, else
+/// the URL host as `host:<host>`; stdio commands share "local"), in first-seen order (`serverGroups` in marketplace.js).
+public func serverGroups(_ servers: [Server], _ catalog: [MarketplaceEntry]) -> [ServerGroup] {
+    let host = { (u: String) in URL(string: u)?.host()?.lowercased() ?? u }
+    var groups: [ServerGroup] = []
+    for s in servers {
+        let url = s.transport.url
+        let entry = url.flatMap { u in catalog.first { $0.url == u } ?? catalog.first { host($0.url) == host(u) } }
+        let (id, name) = entry.map { ($0.id, $0.name) } ?? url.map { ("host:\(host($0))", host($0)) } ?? ("local", "Local commands")
+        if let i = groups.firstIndex(where: { $0.id == id }) { groups[i].servers.append(s) }
+        else { groups.append(ServerGroup(id: id, name: name, servers: [s])) }
+    }
+    return groups
+}
+
+/// Inputs: a group's servers. Outputs: summary line, e.g. "2 MCPs · 1 off" (`groupSummary` in marketplace.js).
+public func groupSummary(_ servers: [Server]) -> String {
+    let off = servers.filter { !$0.enabled }.count
+    return "\(servers.count) \(servers.count == 1 ? "MCP" : "MCPs")\(off > 0 ? " · \(off) off" : "")"
+}
+
 /// Inputs: servers, name. Outputs: whether another MCP already uses the name (case-insensitive).
 public func nameTaken(_ servers: [Server], _ name: String) -> Bool {
     let n = name.trimmingCharacters(in: .whitespaces).lowercased()

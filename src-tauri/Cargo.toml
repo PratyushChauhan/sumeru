@@ -1,6 +1,6 @@
 [package]
 name = "sumeru"
-version = "0.4.1"
+version = "0.4.2"
 description = "Local MCP funnel desktop app"
 authors = ["Pratyush Chauhan"]
 license = "MIT"
