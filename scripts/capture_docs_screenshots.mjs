@@ -140,6 +140,10 @@ await shot(page, "configure.png", { clipApp: true });
 await page.getByRole("tab", { name: "Marketplace" }).click();
 await page.getByRole("button", { name: "Add account" }).waitFor();
 await shot(page, "marketplace.png", { clipApp: true });
+await page.getByRole("listitem").filter({ hasText: "Render" }).getByRole("button", { name: "Install" }).click();
+await page.getByRole("heading", { name: "Connect Render" }).waitFor();
+await shot(page, "marketplace-api-key.png");
+await page.keyboard.press("Escape");
 
 await page.getByRole("tab", { name: "Configure" }).click();
 await page.getByRole("button", { name: "Add MCP" }).click();

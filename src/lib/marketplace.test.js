@@ -24,10 +24,17 @@ describe("marketplace helpers", () => {
         "neon",
         "notion",
         "plane",
+        "render",
         "sentry",
         "stripe",
       ],
     );
+  });
+
+  it("marks API-key providers with an https key page", () => {
+    const keyed = listMarketplaceEntries().filter((e) => e.apiKeyUrl);
+    assert.deepEqual(keyed.map((e) => e.id), ["render"]);
+    for (const e of keyed) assert.match(e.apiKeyUrl, /^https:\/\//);
   });
 
   it("lists every installed account for an entry URL", () => {

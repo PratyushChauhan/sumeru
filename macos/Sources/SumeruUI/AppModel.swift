@@ -118,17 +118,24 @@ public final class AppModel {
         } catch { return error.localizedDescription }
     }
 
-    /// Inputs: catalog entry, account name. Outputs: nil when installed (OAuth first), else the error.
-    func install(_ entry: MarketplaceEntry, name: String) async -> String? {
+    /// Inputs: catalog entry, account name, API key (key-based providers only).
+    /// Outputs: nil when installed (after OAuth, or a successful test connect with the key), else the error.
+    func install(_ entry: MarketplaceEntry, name: String, apiKey: String = "") async -> String? {
         if nameTaken(servers, name) { return "Another MCP is already named “\(name)”. Pick a different name." }
         installing = entry.id
         defer { installing = nil }
         let id = UUID().uuidString.lowercased()
-        guard let p = await probe(url: entry.url, id: id), p.oauth, p.supportsDcr else {
-            return "This server no longer supports automatic registration. Add it from MCPs instead."
+        let transport = Transport.http(url: entry.url, headerKeys: [], hasBearer: true)
+        let secrets = entry.apiKeyUrl == nil ? Secrets() : Secrets(bearer: apiKey.trimmingCharacters(in: .whitespaces))
+        if entry.apiKeyUrl != nil {
+            do { try await engine.run("test_draft", DraftParams(name: name, transport: transport, secrets: secrets)) } catch { return "Couldn't connect with that API key: \(error.localizedDescription)" }
+        } else {
+            guard let p = await probe(url: entry.url, id: id), p.oauth, p.supportsDcr else {
+                return "This server no longer supports automatic registration. Add it from MCPs instead."
+            }
+            if let err = await signIn(url: entry.url, id: id) { return err }
         }
-        if let err = await signIn(url: entry.url, id: id) { return err }
-        let ok = await save(id: id, name: name, enabled: true, transport: .http(url: entry.url, headerKeys: [], hasBearer: true), secrets: Secrets())
+        let ok = await save(id: id, name: name, enabled: true, transport: transport, secrets: secrets)
         return ok ? nil : error
     }
 
