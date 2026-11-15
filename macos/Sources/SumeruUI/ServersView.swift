@@ -15,23 +15,8 @@ struct ServersView: View {
 
     var body: some View {
         List {
-            ForEach(model.servers) { s in
-                HStack(spacing: 12) {
-                    Toggle("Enabled", isOn: Binding(get: { s.enabled }, set: { v in Task { await model.setEnabled(s, v) } }))
-                        .toggleStyle(.switch).labelsHidden().controlSize(.small)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s.name)
-                        Text(Self.detail(s.transport)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                    }
-                    Spacer()
-                    Button("Test") { Task { result = await model.test(s) } }
-                    Menu {
-                        Button("Edit…") { editing = EditTarget(server: s) }
-                        Button("Remove", role: .destructive) { Task { await model.remove(s) } }
-                    } label: { Image(systemName: "ellipsis.circle") }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                }
-                .padding(.vertical, 4)
+            ForEach(serverGroups(model.servers, model.catalog)) { g in
+                AppGroup(group: g, detail: groupSummary(g.servers)) { ForEach(g.servers, content: row) }
             }
         }
         .overlay {
@@ -45,6 +30,26 @@ struct ServersView: View {
         .alert("Test", isPresented: Binding(get: { result != nil }, set: { if !$0 { result = nil } })) {
             Button("OK") {}
         } message: { Text(result ?? "") }
+    }
+
+    /// Inputs: server. Outputs: its row: enable switch, name + detail, Test, Edit/Remove menu.
+    private func row(_ s: Server) -> some View {
+        HStack(spacing: 12) {
+            Toggle("Enabled", isOn: Binding(get: { s.enabled }, set: { v in Task { await model.setEnabled(s, v) } }))
+                .toggleStyle(.switch).labelsHidden().controlSize(.small)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(s.name)
+                Text(Self.detail(s.transport)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            Button("Test") { Task { result = await model.test(s) } }
+            Menu {
+                Button("Edit…") { editing = EditTarget(server: s) }
+                Button("Remove", role: .destructive) { Task { await model.remove(s) } }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        }
+        .padding(.vertical, 4)
     }
 
     /// Inputs: transport. Outputs: one-line summary (URL, or command + args).
