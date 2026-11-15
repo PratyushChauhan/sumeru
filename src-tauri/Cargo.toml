@@ -1,6 +1,6 @@
 [package]
 name = "sumeru"
-version = "0.3.2"
+version = "0.4.0"
 description = "Local MCP funnel desktop app"
 authors = ["Pratyush Chauhan"]
 license = "MIT"
@@ -10,12 +10,18 @@ edition = "2021"
 name = "sumeru_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Tauri desktop UI. Off (`--no-default-features`) for the headless binary the native
+# macOS app bundles as its engine.
+default = ["gui"]
+gui = ["dep:tauri", "dep:tauri-plugin-autostart", "dep:tauri-build", "dep:glib"]
+
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2"
+tauri = { version = "2", features = ["tray-icon"], optional = true }
+tauri-plugin-autostart = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
@@ -32,7 +38,7 @@ rmcp = { version = "2.2", features = [
 ] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["fs"] }
-tokio = { version = "1", features = ["net", "process", "sync", "time", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["net", "process", "sync", "time", "rt-multi-thread", "macros", "io-std", "io-util"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "form"] }
@@ -51,7 +57,7 @@ open = "5.4.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Match Tauri/gtk stack; used only to filter ayatana tray deprecation noise.
-glib = "0.18"
+glib = { version = "0.18", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

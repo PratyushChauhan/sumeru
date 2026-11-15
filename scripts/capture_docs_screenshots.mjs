@@ -87,7 +87,9 @@ await page.addInitScript(
       transformCallback: () => 0,
       unregisterCallback: () => {},
       convertFileSrc: (p) => p,
-      invoke: async (cmd) => {
+      // App commands arrive as `api` { method, params }; window/autostart/docs stay direct.
+      invoke: async (name, args) => {
+        const cmd = name === "api" ? args.method : name;
         switch (cmd) {
           case "get_status":
             return { running: state.running, endpoint: state.endpoint };
@@ -138,6 +140,10 @@ await shot(page, "configure.png", { clipApp: true });
 await page.getByRole("tab", { name: "Marketplace" }).click();
 await page.getByRole("button", { name: "Add account" }).waitFor();
 await shot(page, "marketplace.png", { clipApp: true });
+await page.getByRole("listitem").filter({ hasText: "Render" }).getByRole("button", { name: "Install" }).click();
+await page.getByRole("heading", { name: "Connect Render" }).waitFor();
+await shot(page, "marketplace-api-key.png");
+await page.keyboard.press("Escape");
 
 await page.getByRole("tab", { name: "Configure" }).click();
 await page.getByRole("button", { name: "Add MCP" }).click();

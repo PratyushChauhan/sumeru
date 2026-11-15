@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveNativeArgs } from "./args.js";
+import { guiCommand, resolveNativeArgs } from "./args.js";
 
 describe("resolveNativeArgs", () => {
   it("defaults bare sumeru to mcp-stdio", () => {
@@ -28,5 +28,20 @@ describe("resolveNativeArgs", () => {
   it("passes other argv through unchanged", () => {
     assert.deepEqual(resolveNativeArgs(["--hidden"]), ["--hidden"]);
     assert.deepEqual(resolveNativeArgs(["doctor"]), ["doctor"]);
+  });
+});
+
+describe("guiCommand", () => {
+  it("opens the native app for gui on macOS", () => {
+    assert.deepEqual(guiCommand(["gui"], "darwin"), ["open", ["-b", "com.sumeru.app"]]);
+    assert.deepEqual(guiCommand(["gui", "--hidden"], "darwin"), [
+      "open",
+      ["-b", "com.sumeru.app", "--args", "--hidden"],
+    ]);
+  });
+
+  it("leaves other platforms and commands to the native binary", () => {
+    assert.equal(guiCommand(["gui"], "linux"), null);
+    assert.equal(guiCommand(["mcp-stdio"], "darwin"), null);
   });
 });

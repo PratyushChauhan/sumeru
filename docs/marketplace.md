@@ -1,6 +1,6 @@
 # Marketplace
 
-The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that support Dynamic Client Registration (DCR).
+The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs. Most sign in with browser OAuth (Dynamic Client Registration); a few, like **Render**, use an API key instead.
 
 ![Marketplace tab with curated providers and Install buttons](/images/marketplace.png)
 
@@ -10,6 +10,10 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 2. Find a provider and click **Install**
 3. Complete browser OAuth
 4. Sumeru saves the MCP only if sign-in succeeds
+
+API-key providers (Render) open a dialog instead: paste a key (the dialog links to the provider's key page), click **Connect**. Sumeru test-connects with the key first and saves it to your keychain only if that works.
+
+![Connect Render dialog with account name, API key, and a link to create a key](/images/marketplace-api-key.png)
 
 ## Add another account
 
