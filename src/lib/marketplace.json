@@ -60,6 +60,13 @@
       "name": "Canva",
       "description": "Work with Canva designs and brand assets.",
       "url": "https://mcp.canva.com/mcp"
+    },
+    {
+      "id": "render",
+      "name": "Render",
+      "description": "Manage services, deploys, logs, metrics, and Postgres on Render.",
+      "url": "https://mcp.render.com/mcp",
+      "apiKeyUrl": "https://dashboard.render.com/u/settings#api-keys"
     }
   ]
 }

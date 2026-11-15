@@ -1,12 +1,13 @@
 import SwiftUI
 import SumeruKit
 
-/// Curated OAuth MCPs: Install (browser sign-in), or Add account when one is already installed.
+/// Curated MCPs: Install (browser sign-in, or an API key for key-based providers), or Add account.
 struct MarketplaceView: View {
     let model: AppModel
     @State private var query = ""
     @State private var adding: MarketplaceEntry?
     @State private var accountName = ""
+    @State private var apiKey = ""
     @State private var addError: String?
 
     private var entries: [MarketplaceEntry] {
@@ -25,14 +26,21 @@ struct MarketplaceView: View {
         }
         .searchable(text: $query, placement: .toolbar)
         .sheet(item: $adding) { e in
+            let first = installedServers(e, model.servers).isEmpty
             Form {
                 Section {
                     TextField("Account name", text: $accountName)
+                    if e.apiKeyUrl != nil { SecureField("\(e.name) API key", text: $apiKey) }
                 } header: {
-                    Text("Add another \(e.name) account")
+                    Text(e.apiKeyUrl != nil && first ? "Connect \(e.name)" : "Add another \(e.name) account")
                 } footer: {
-                    Text(addError ?? "If sign-in returns the same account, sign out of \(e.name) in your browser first, or use another browser profile.")
-                        .foregroundStyle(addError == nil ? Color.secondary : Color.red)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let url = e.apiKeyUrl.flatMap(URL.init(string:)) {
+                            Link("Create a key in the \(e.name) dashboard", destination: url)
+                        }
+                        Text(addError ?? (e.apiKeyUrl != nil ? "Stored in your keychain after a test connect succeeds." : "If sign-in returns the same account, sign out of \(e.name) in your browser first, or use another browser profile."))
+                            .foregroundStyle(addError == nil ? Color.secondary : Color.red)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -40,8 +48,9 @@ struct MarketplaceView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { adding = nil } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Sign In & Add") { Task { await install(e, name: accountName) } }
-                        .disabled(accountName.trimmingCharacters(in: .whitespaces).isEmpty || model.installing != nil)
+                    Button(e.apiKeyUrl != nil ? "Connect" : "Sign In & Add") { Task { await install(e, name: accountName) } }
+                        .disabled(accountName.trimmingCharacters(in: .whitespaces).isEmpty || model.installing != nil
+                                  || (e.apiKeyUrl != nil && apiKey.trimmingCharacters(in: .whitespaces).isEmpty))
                 }
             }
         }
@@ -60,9 +69,10 @@ struct MarketplaceView: View {
                         Spacer()
                         if model.installing == e.id { ProgressView().controlSize(.small) }
                         if count > 0 {
-                            Button("Add Account") { addError = nil; accountName = nextAccountName(e, model.servers); adding = e }
+                            Button("Add Account") { open(e) }
                         } else {
-                            Button("Install") { Task { await install(e, name: e.name) } }.buttonStyle(.borderedProminent)
+                            Button("Install") { if e.apiKeyUrl != nil { open(e) } else { Task { await install(e, name: e.name) } } }
+                                .buttonStyle(.borderedProminent)
                         }
                     }
                     .disabled(model.installing != nil)
@@ -72,9 +82,17 @@ struct MarketplaceView: View {
         }
     }
 
+    /// Inputs: entry. Outputs: account sheet, named after the provider or the next free "<Provider> N".
+    private func open(_ e: MarketplaceEntry) {
+        addError = nil
+        apiKey = ""
+        accountName = installedServers(e, model.servers).isEmpty ? e.name : nextAccountName(e, model.servers)
+        adding = e
+    }
+
     /// Inputs: entry, account name. Outputs: installed (sheet closed) or the error shown.
     private func install(_ e: MarketplaceEntry, name: String) async {
-        if let err = await model.install(e, name: name.trimmingCharacters(in: .whitespaces)) {
+        if let err = await model.install(e, name: name.trimmingCharacters(in: .whitespaces), apiKey: apiKey) {
             if adding != nil { addError = err } else { model.error = err }
         } else {
             adding = nil

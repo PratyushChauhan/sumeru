@@ -113,6 +113,8 @@ public struct MarketplaceEntry: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var description: String
     public var url: String
+    /// Set for API-key providers (e.g. Render): where to create a key. Nil means OAuth (DCR).
+    public var apiKeyUrl: String?
 }
 
 /// Inputs: marketplace.json data. Outputs: its provider entries.

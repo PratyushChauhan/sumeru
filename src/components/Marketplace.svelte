@@ -1,7 +1,7 @@
 <!--
   @component
   Inputs: servers list, refresh callback.
-  Outputs: DCR marketplace browse, one-click install, and extra accounts per provider.
+  Outputs: marketplace browse; OAuth (DCR) or API-key install; extra accounts per provider.
 -->
 <script>
   import * as api from "$lib/api.js";
@@ -30,22 +30,28 @@
   let addOpen = $state(false);
   let adding = $state(null);
   let accountName = $state("");
+  let apiKey = $state("");
 
   const visible = $derived(filterMarketplaceEntries(entries, query));
 
   /**
-   * Inputs: catalog entry. Outputs: account-name dialog prefilled with the next free name.
+   * Inputs: catalog entry. Outputs: account dialog (name, plus API key for key-based providers),
+   * prefilled with the provider name or the next free "<Provider> N".
    */
   function onAddAccount(entry) {
     adding = entry;
-    accountName = nextAccountName(entry, servers);
+    accountName = installedServers(entry, servers).length
+      ? nextAccountName(entry, servers)
+      : entry.name;
+    apiKey = "";
     msg = "";
     addOpen = true;
   }
 
   /**
    * Inputs: catalog entry, server name.
-   * Outputs: OAuth-first install, or the account dialog when the name is taken (checked before sign-in).
+   * Outputs: OAuth-first install (or API key, checked with a test connect first); the account
+   * dialog when the name is taken (checked before sign-in).
    */
   async function onInstall(entry, name) {
     if (installingId) return;
@@ -56,29 +62,26 @@
       return;
     }
     installingId = entry.id;
-    msg = "Opening browser sign-in…";
+    msg = entry.apiKeyUrl ? "Checking API key…" : "Opening browser sign-in…";
     msgTone = "";
     const id = crypto.randomUUID();
+    const transport = { kind: "http", url: entry.url, header_keys: [], has_bearer: true };
+    const secrets = entry.apiKeyUrl ? { bearer: apiKey.trim() } : {};
     try {
-      const probe = await api.probeMcpAuth({ url: entry.url, id });
-      if (!probe?.oauth || !probe.supports_dcr) {
-        throw new Error(
-          "This server no longer supports automatic registration. Add it from Configure instead.",
-        );
+      if (entry.apiKeyUrl) {
+        await api.testDraft({ name, transport, secrets }).catch((e) => {
+          throw new Error(`Couldn't connect with that API key: ${e}`);
+        });
+      } else {
+        const probe = await api.probeMcpAuth({ url: entry.url, id });
+        if (!probe?.oauth || !probe.supports_dcr) {
+          throw new Error(
+            "This server no longer supports automatic registration. Add it from Configure instead.",
+          );
+        }
+        await api.startMcpOauth({ url: entry.url, id });
       }
-      await api.startMcpOauth({ url: entry.url, id });
-      await api.upsertServer({
-        id,
-        name,
-        enabled: true,
-        transport: {
-          kind: "http",
-          url: entry.url,
-          header_keys: [],
-          has_bearer: true,
-        },
-        secrets: {},
-      });
+      await api.upsertServer({ id, name, enabled: true, transport, secrets });
       addOpen = false;
       msg = `${name} installed`;
       msgTone = "ok";
@@ -160,7 +163,8 @@
               <Button
                 size="xs"
                 disabled={!!installingId}
-                onclick={() => onInstall(entry, entry.name)}
+                onclick={() =>
+                  entry.apiKeyUrl ? onAddAccount(entry) : onInstall(entry, entry.name)}
               >
                 {busy ? "…" : "Install"}
               </Button>
@@ -175,7 +179,11 @@
 <Dialog.Root bind:open={addOpen}>
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
-      <Dialog.Title>Add another {adding?.name} account</Dialog.Title>
+      <Dialog.Title>
+        {adding?.apiKeyUrl && !installedServers(adding, servers).length
+          ? `Connect ${adding.name}`
+          : `Add another ${adding?.name} account`}
+      </Dialog.Title>
     </Dialog.Header>
     <form
       class="grid gap-3"
@@ -188,11 +196,28 @@
         <Label for="account-name">Account name</Label>
         <Input id="account-name" bind:value={accountName} required />
         <p class="text-muted-foreground text-xs m-0">
-          Agents see this name in <code>list_mcps</code>. Sumeru asks
-          {adding?.name} for a fresh login; if you land in the same account,
-          sign out of {adding?.name} in your browser first.
+          Agents see this name in <code>list_mcps</code>.
+          {#if !adding?.apiKeyUrl}
+            Sumeru asks {adding?.name} for a fresh login; if you land in the same
+            account, sign out of {adding?.name} in your browser first.
+          {/if}
         </p>
       </div>
+      {#if adding?.apiKeyUrl}
+        <div class="grid gap-2">
+          <Label for="api-key">{adding.name} API key</Label>
+          <Input id="api-key" type="password" bind:value={apiKey} required autocomplete="off" />
+          <p class="text-muted-foreground text-xs m-0">
+            Stored in your keychain.
+            <button
+              type="button"
+              class="underline"
+              onclick={() => api.openUrl(adding.apiKeyUrl).catch((e) => alert(String(e)))}
+            >Create a key</button>
+            in the {adding.name} dashboard.
+          </p>
+        </div>
+      {/if}
       {#if msgTone === "err"}
         <p role="alert" class="text-destructive text-sm m-0">{msg}</p>
       {/if}
@@ -201,7 +226,7 @@
           Cancel
         </Button>
         <Button type="submit" disabled={!!installingId}>
-          {installingId ? "…" : "Sign in"}
+          {installingId ? "…" : adding?.apiKeyUrl ? "Connect" : "Sign in"}
         </Button>
       </Dialog.Footer>
     </form>

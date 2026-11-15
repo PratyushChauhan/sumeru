@@ -6,6 +6,7 @@ import linear from "../assets/marketplace/linear.svg";
 import neon from "../assets/marketplace/neon.svg";
 import notion from "../assets/marketplace/notion.svg";
 import plane from "../assets/marketplace/plane.png";
+import render from "../assets/marketplace/render.svg";
 import sentry from "../assets/marketplace/sentry.svg";
 import stripe from "../assets/marketplace/stripe.svg";
 import { marketplaceIdForUrl } from "./marketplace.js";
@@ -19,6 +20,7 @@ const icons = {
   neon,
   notion,
   plane,
+  render,
   sentry,
   stripe,
 };

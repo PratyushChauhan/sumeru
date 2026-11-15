@@ -118,6 +118,7 @@ let servers = ["a", "b", "c"].map { Server(id: $0, name: $0, enabled: true, tran
         let file = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../../src/lib/marketplace.json")
         let entries = try decodeMarketplace(Data(contentsOf: file))
         #expect(entries.contains { $0.id == "fathom" } && entries.allSatisfy { $0.url.hasPrefix("https://") })
+        #expect(entries.filter { $0.apiKeyUrl != nil }.map(\.id) == ["render"])
     }
 
     @Test func drafts() throws {
