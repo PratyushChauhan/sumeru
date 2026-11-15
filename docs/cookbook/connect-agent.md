@@ -16,7 +16,9 @@
 | Gemini CLI | **Copy** the `gemini mcp add …` command and run it in a terminal |
 | Windsurf | **Copy** the snippet into `~/.codeium/windsurf/mcp_config.json` |
 
-The preview masks the token; **Copy** and **Add to …** use the selected key's real token. Non-default keys install as `sumeru-<key name>`, so one agent can hold several. Agents store it in plain text in their config, and the CLI commands also land in your shell history — rotate the token if either leaks.
+Or let the agent do it: **Copy prompt** gives a prompt to paste into that agent's chat — it wraps the same command/snippet and asks the agent to install it, keep your other MCP servers, and say whether it needs a restart.
+
+The preview masks the token; **Copy**, **Copy prompt**, and **Add to …** use the selected key's real token. Non-default keys install as `sumeru-<key name>`, so one agent can hold several. Agents store it in plain text in their config, and the CLI commands also land in your shell history — rotate the token if either leaks.
 
 4. Reload MCP servers in your agent and call `list_mcps` to confirm your upstreams appear
 

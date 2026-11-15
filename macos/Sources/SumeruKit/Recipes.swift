@@ -88,6 +88,14 @@ public func agentInstalls(url: String, token: String, server: String = "sumeru",
     ]
 }
 
+/// Inputs: a recipe from `agentInstalls`, and `env` (repo scope's token env var, or "").
+/// Outputs: a prompt to paste into that agent so it installs Sumeru itself (`agentPrompt` in agents.js).
+public func agentPrompt(_ r: AgentRecipe, env: String = "") -> String {
+    let how = r.hint.replacingOccurrences(of: "^Click Add to [^,]+, or p", with: "P", options: .regularExpression)
+    let secret = env.isEmpty ? "" : " It reads the token from $\(env); never write the token into the repo."
+    return "Install the Sumeru MCP server in \(r.name). \(how):\n\n```\n\(r.text)\n```\n\nKeep my other MCP servers and settings.\(secret) Then tell me if \(r.name) needs a restart to load it."
+}
+
 /// Inputs: endpoint URL, server name, env var holding the key's token.
 /// Outputs: repo-level recipes safe to commit (env var or VS Code password prompt, never the token).
 func repoInstalls(url: String, server: String, env: String) -> [AgentRecipe] {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { agentInstalls } from "./agents.js";
+import { agentInstalls, agentPrompt } from "./agents.js";
 
 const URL_ = "http://127.0.0.1:7341/mcp";
 const TOKEN = "tok+/=";
@@ -78,5 +78,17 @@ describe("agent install recipes", () => {
     assert.equal(vscode.inputs[0].password, true);
     assert.equal(vscode.servers["sumeru-work"].headers.Authorization, `Bearer \${input:${vscode.inputs[0].id}}`);
     assert.match(find("gemini"), /--scope project --transport http sumeru-work http\S+ --header 'Authorization: Bearer \$\{SUMERU_WORK_TOKEN\}'$/);
+  });
+
+  it("builds a paste-in prompt around the recipe", () => {
+    assert.equal(
+      agentPrompt(byId("codex")),
+      `Install the Sumeru MCP server in Codex. Paste into ~/.codex/config.toml (replace any existing [mcp_servers.sumeru]):\n\n\`\`\`\n${byId("codex").text}\n\`\`\`\n\nKeep my other MCP servers and settings. Then tell me if Codex needs a restart to load it.`,
+    );
+    assert.match(agentPrompt(byId("cursor")), /in Cursor\. Paste into ~\/\.cursor\/mcp\.json:\n/);
+    const repo = agentInstalls(URL_, TOKEN, "sumeru", "SUMERU_TOKEN")[0];
+    const p = agentPrompt(repo, "SUMERU_TOKEN");
+    assert.ok(p.includes(repo.text) && !p.includes(TOKEN));
+    assert.match(p, /reads the token from \$SUMERU_TOKEN; never write the token into the repo\./);
   });
 });
