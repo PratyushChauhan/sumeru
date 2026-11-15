@@ -140,7 +140,7 @@ Plain HTTP is allowed only for loopback hosts. Remote URLs must use HTTPS.
 
 ## Marketplace
 
-The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that support DCR (`src/lib/marketplace.json`). **Install** runs browser OAuth first and only saves the MCP if sign-in succeeds. **Add account** connects another account of an installed provider (asks for a unique name and forces a fresh provider login). Non-DCR or stdio servers stay on **Configure → Add MCP**.
+The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs (`src/lib/marketplace.json`, shared by both apps). **Install** runs browser OAuth (DCR) first and only saves the MCP if sign-in succeeds. API-key providers (**Render**, marked with `apiKeyUrl`) ask for a key instead, test-connect with it, and save it to the keychain only if that works. **Add account** connects another account of an installed provider (asks for a unique name and forces a fresh provider login). Non-DCR or stdio servers stay on **Configure → Add MCP**.
 
 ## Lifecycle
 
