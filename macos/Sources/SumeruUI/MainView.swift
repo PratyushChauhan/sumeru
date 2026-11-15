@@ -43,6 +43,9 @@ public struct MainView: View {
             }
             .navigationTitle(section.rawValue)
             .toolbar {
+                // Status light in its own glass capsule; the spacer stops macOS 26 grouping it with Start/Stop.
+                ToolbarItem(placement: .primaryAction) { StatusLight(running: model.status.running) }
+                if #available(macOS 26, *) { ToolbarSpacer(.fixed, placement: .primaryAction) }
                 ToolbarItem(placement: .primaryAction) { FunnelToggle(model: model) }
             }
         }
@@ -52,12 +55,22 @@ public struct MainView: View {
     }
 }
 
-/// Running badge + Start/Stop, shared by the toolbar and the menu bar.
+/// Inputs: running flag. Outputs: green (running) or grey (stopped) light, labelled for VoiceOver.
+struct StatusLight: View {
+    let running: Bool
+    var body: some View {
+        Circle().fill(running ? Color.green : Color.secondary).frame(width: 9, height: 9)
+            .frame(width: 36, height: 22) // toolbar glass adds height only; 36 pt wide makes it round like the + button
+            .help(running ? "Funnel running" : "Funnel stopped")
+            .accessibilityLabel(running ? "Funnel running" : "Funnel stopped")
+    }
+}
+
+/// Status text + Start/Stop for the toolbar.
 struct FunnelToggle: View {
     let model: AppModel
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill(model.status.running ? Color.green : Color.secondary).frame(width: 8, height: 8)
             Text(model.status.running ? "Running" : "Stopped").foregroundStyle(.secondary)
             Button(model.status.running ? "Stop" : "Start") { Task { await model.toggleFunnel() } }
         }
