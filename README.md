@@ -10,24 +10,33 @@
 Formerly **funnelit**. Local desktop MCP funnel. Add N upstream MCP servers (stdio commands or HTTP URLs) and expose them through one authenticated Streamable HTTP endpoint.
 
 <p align="center">
-  <img src="docs/public/images/configure.png" alt="Configure tab with running badge, endpoint URL, and bearer token" width="420" />
+  <img src="docs/public/images/macos-mcps.png" alt="Native macOS app: MCPs pane with enable switches, Test buttons and the sidebar" width="420" />
   &nbsp;
-  <img src="docs/public/images/marketplace.png" alt="Marketplace tab with curated providers and Install buttons" width="420" />
+  <img src="docs/public/images/macos-marketplace.png" alt="Native macOS app: Marketplace grid with Install and Add Account buttons" width="420" />
 </p>
+
+<p align="center"><sub>Native SwiftUI app on macOS · the Tauri app on Linux (<a href="docs/public/images/configure.png">screenshot</a>)</sub></p>
 
 ## Install
 
-- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **Sumeru** to **Applications**. It's a native menu-bar app: the Sumeru icon in the menu bar shows status, copies the endpoint, and opens the main window. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. If it still won't open, run `xattr -dr com.apple.quarantine /Applications/sumeru.app` in Terminal. On first launch and after updates, macOS may ask to let **sumeru** use its keychain item; enter your password and click **Always Allow** (the endpoint starts once you answer).
+- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **Sumeru** to **Applications**. It's a native menu-bar app: the Sumeru icon in the menu bar shows status, copies the endpoint, and opens the main window. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. If it still won't open, run `xattr -dr com.apple.quarantine /Applications/Sumeru.app` in Terminal. On first launch and after updates, macOS may ask to let **sumeru** (the bundled engine) use its keychain item; enter your password and click **Always Allow** (the endpoint starts once you answer).
 - **Linux**: AppImage, `.deb` or `.rpm` from the same release.
 - **npm**: `npm i -g sumeru-mcp && sumeru gui` ([npm CLI](#npm-cli)).
 
-## Run
+## Develop
 
-Frontend is Svelte 5 + Vite + [shadcn-svelte](https://www.shadcn-svelte.com/) (Rhea / mist). Dev/build are wired through Tauri:
+One Rust core, two UIs:
+
+- **Engine** (`src-tauri/`): the gateway, OAuth, keychain, and every app command in `src-tauri/src/api.rs` (`dispatch`). `sumeru engine` serves those commands as JSON lines on stdin/stdout; `cargo build --no-default-features` builds it headless (no Tauri/WebKit).
+- **macOS** (`macos/`): native SwiftUI menu-bar app (SwiftPM, builds with the Command Line Tools) that bundles the headless engine in `Contents/Helpers` and drives it over pipes.
+- **Linux** (`src/`): Svelte 5 + Vite + [shadcn-svelte](https://www.shadcn-svelte.com/) in Tauri, calling the same commands through one `api` command.
 
 ```bash
 npm install
-npm run tauri dev
+npm run build:macos   # macOS: dist-macos/Sumeru.app + universal DMG
+npm run test:macos    # Swift tests
+npm run tauri dev     # Linux UI (or the Tauri UI on any desktop)
+npm test              # JS tests; Rust: cargo test --lib (in src-tauri)
 ```
 
 CI:
@@ -43,7 +52,7 @@ Install the launcher (downloads the matching portable binary on first run):
 npm i -g sumeru-mcp
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
-sumeru gui         # desktop UI
+sumeru gui         # desktop UI (on macOS: opens Sumeru.app)
 ```
 
 Cursor / MCP host stdio config example:
@@ -63,14 +72,14 @@ Overrides: `SUMERU_BINARY` (local binary path), `SUMERU_VERSION`, `SUMERU_CACHE_
 
 ## Funnel endpoint
 
-The funnel starts automatically on launch and keeps running in the system tray when you close the window. Open from the tray to configure; Quit from the tray to stop the endpoint. Optionally enable **Run at system startup** (starts hidden in the tray). Pause/Resume in the UI if needed:
+The funnel starts automatically on launch and keeps running in the menu bar (macOS) or system tray (Linux) when you close the window. Open the window from there to configure; Quit from there to stop the endpoint. Optionally enable **Open at login** / **Run at system startup** (starts hidden). Start/Stop in the UI if needed:
 
 - URL: `http://127.0.0.1:7341/mcp`
-- Auth: `Authorization: Bearer <token>` — one token per API key (**Configure → Keys**). Each key is either *all MCPs except…* or *only…*; the gateway enforces it ([Scoped API keys](docs/cookbook/scoped-keys.md))
+- Auth: `Authorization: Bearer <token>` — one token per API key (**API Keys** on macOS, **Configure → Keys** on Linux). Each key is either *all MCPs except…* or *only…*; the gateway enforces it ([Scoped API keys](docs/cookbook/scoped-keys.md))
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
-**Configure → Connect an agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`). Pick an API key to scope it, and **This repo** for a committable project config that reads the token from an env var instead of containing it.
+**Connect an Agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`, mirrored byte-for-byte in `macos/Sources/SumeruKit/Recipes.swift`). Pick an API key to scope it, and **This repo** for a committable project config that reads the token from an env var instead of containing it.
 
 Example client config:
 
@@ -135,7 +144,7 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 
 ## Lifecycle
 
-- Closing the window hides the UI; the MCP funnel keeps serving from the tray
+- Closing the window hides the UI; the MCP funnel keeps serving from the menu bar / tray (on macOS, quitting the app closes the engine's stdin, which stops the gateway)
 - Upstream clients connect lazily on first `list_mcp_tools` / `execute_mcp_tool`
 - Connections are reused until Sumeru quits, the MCP is edited/deleted, or the transport closes
 - Tool execution is never auto-retried after an ambiguous failure
@@ -158,7 +167,7 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs that suppor
 
 **Breaking (v0.1):** app id `com.sumeru.app`, config dir, keychain service `sumeru`, CLI/npm `sumeru`, and env `SUMERU_*`. Prior funnelit installs are not migrated — reconfigure or copy config/secrets manually.
 
-**Docs:** [GitHub Pages](https://pratyushchauhan.github.io/sumeru/) · in the app, **Docs** serves the same VitePress site locally at `http://127.0.0.1:7343`. Source is [`docs/`](docs/). Preview with `npm run docs:dev`.
+**Docs:** [GitHub Pages](https://pratyushchauhan.github.io/sumeru/) · the macOS app links there (**General → Documentation**); the Linux app's **Docs** serves the same VitePress site locally at `http://127.0.0.1:7343`. Source is [`docs/`](docs/). Preview with `npm run docs:dev`.
 
 **Linux AppImage on Wayland:** if you see `EGL_BAD_PARAMETER`, run with `LD_PRELOAD=/usr/lib/libwayland-client.so ./sumeru_*.AppImage` (or use the `.deb` / `.tar.gz`). Newer builds also re-exec with the host Wayland client automatically. See Docs → Linux.
 
