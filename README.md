@@ -41,7 +41,7 @@ npm test              # JS tests; Rust: cargo test --lib (in src-tauri)
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.0`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
+- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.1`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
@@ -79,7 +79,7 @@ The funnel starts automatically on launch and keeps running in the menu bar (mac
 - Browser `Origin` requests are rejected
 - Transport: stateless Streamable HTTP with JSON POSTs; GET `/mcp` returns a keep-alive SSE stream
 
-**Connect an Agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks (`src/lib/agents.js`, mirrored byte-for-byte in `macos/Sources/SumeruKit/Recipes.swift`). Pick an API key to scope it, and **This repo** for a committable project config that reads the token from an env var instead of containing it.
+**Connect an Agent** builds the install command/snippet for Claude Code, Codex, Cursor, VS Code, Gemini CLI, and Windsurf, with one-click **Add to Cursor** / **Add to VS Code** deeplinks and a **Copy prompt** you can paste into the agent so it installs itself (`src/lib/agents.js`, mirrored byte-for-byte in `macos/Sources/SumeruKit/Recipes.swift`). Pick an API key to scope it, and **This repo** for a committable project config that reads the token from an env var instead of containing it.
 
 Example client config:
 

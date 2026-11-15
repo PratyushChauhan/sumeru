@@ -12,7 +12,7 @@
   import * as Card from "$lib/components/ui/card/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
   import * as Tabs from "$lib/components/ui/tabs/index.js";
-  import { agentInstalls } from "$lib/agents.js";
+  import { agentInstalls, agentPrompt } from "$lib/agents.js";
   import { agentServerName, scopeLabel, tokenEnvVar } from "$lib/keys.js";
   import KeyEditor from "./KeyEditor.svelte";
 
@@ -204,6 +204,15 @@
           onclick={() => copy(`export ${env}=${selected?.token ?? ""}`)}>Copy export</Button
         >
       {/if}
+      <p class="text-muted-foreground text-xs m-0">Or paste this prompt into {shown.name}</p>
+      <pre
+        class="m-0 overflow-auto whitespace-pre-wrap break-words rounded-2xl bg-background p-3 font-mono text-xs leading-relaxed text-foreground ring-1 ring-foreground/10"
+      >{agentPrompt(shown, env)}</pre>
+      <Button
+        variant="outline"
+        class="w-fit"
+        onclick={() => copy(agentPrompt(install(selected?.token ?? ""), env))}>Copy prompt</Button
+      >
     </div>
     <Separator />
     <div class="flex items-center justify-between gap-4">
