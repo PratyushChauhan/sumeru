@@ -9,6 +9,7 @@ sumeru mcp-stdio   # or just: sumeru
 sumeru mcp-stdio --key "work repo"  # scope to an API key (default: Default)
 sumeru gui         # desktop UI
 sumeru gui --hidden  # tray-only start
+sumeru engine      # internal: gateway + JSON API on stdin/stdout (used by the macOS app)
 ```
 
 On Linux, the portable binary needs system WebKitGTK. For a casual desktop install, prefer the AppImage or `.deb` from [GitHub Releases](https://github.com/PratyushChauhan/sumeru/releases).
