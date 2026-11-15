@@ -47,6 +47,12 @@ struct KeyEditor: View {
     @State private var mode = KeyMode.exclude
     @State private var allowed: Set<String> = []
 
+    /// Inputs: servers. Outputs: switch binding, on when all are reachable; flipping it allows or blocks them all.
+    private func reach(_ servers: [Server]) -> Binding<Bool> {
+        Binding(get: { servers.allSatisfy { allowed.contains($0.id) } },
+                set: { on in for s in servers { if on { allowed.insert(s.id) } else { allowed.remove(s.id) } } })
+    }
+
     var body: some View {
         Form {
             Section { TextField("Name", text: $name).disabled(key?.isDefault == true) }
@@ -62,14 +68,16 @@ struct KeyEditor: View {
             }
             Section("Reachable MCPs") {
                 if model.servers.isEmpty { Text("No MCPs configured yet.").foregroundStyle(.secondary) }
-                ForEach(model.servers) { s in
-                    Toggle(s.name, isOn: Binding(get: { allowed.contains(s.id) },
-                                                 set: { if $0 { allowed.insert(s.id) } else { allowed.remove(s.id) } }))
+                ForEach(serverGroups(model.servers, model.catalog)) { g in
+                    let n = g.servers.filter { allowed.contains($0.id) }.count
+                    AppGroup(group: g, detail: "\(n) of \(g.servers.count) reachable", isOn: reach(g.servers)) {
+                        ForEach(g.servers) { s in Toggle(s.name, isOn: reach([s])).padding(.leading, 48) }
+                    }
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440)
+        .frame(width: 440, height: 480)
         .navigationTitle(key == nil ? "New Key" : "Edit Key")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

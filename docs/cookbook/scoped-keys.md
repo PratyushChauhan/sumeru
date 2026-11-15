@@ -7,7 +7,7 @@ Give each agent or repo its own key that reaches only the MCPs it needs. Sumeru 
 3. Under **New MCPs**, choose what happens to MCPs you add later:
    - **Allowed** — every MCP except the ones you switch off (an exclude list)
    - **Blocked** — only the MCPs you switch on (an include list)
-4. Switch each MCP on (reachable) or off, then **Save**
+4. Switch each MCP on (reachable) or off, then **Save**. MCPs are grouped by app (Render, Sentry, …; local commands together): the app's switch turns all of its MCPs on or off, and expanding the row switches them one by one
 5. In **Connect an agent**, pick the key, then your agent, and install it as usual
 
 Each key installs under its own server name (`sumeru` for Default, `sumeru-<key name>` for others), so one agent can hold several keys side by side.

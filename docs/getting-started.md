@@ -8,7 +8,7 @@
 
 ![Configure tab with running badge, endpoint URL, and bearer token](/images/configure.png)
 
-3. Add MCPs via **Marketplace** (curated DCR HTTP MCPs) or **Configure → Add MCP** (stdio commands or HTTP MCP URLs — remote URLs need HTTPS; plain HTTP is loopback-only — see [OAuth](./oauth.md)).
+3. Add MCPs via **Marketplace** (curated DCR HTTP MCPs) or **Configure → Add MCP** (stdio commands or HTTP MCP URLs — remote URLs need HTTPS; plain HTTP is loopback-only — see [OAuth](./oauth.md)). The MCP list groups them by app — expand a row to see that app's accounts.
 
 ![Marketplace tab with curated providers and Install buttons](/images/marketplace.png)
 

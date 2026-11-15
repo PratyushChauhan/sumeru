@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   filterMarketplaceEntries,
+  groupSummary,
   installedServers,
   listMarketplaceEntries,
   marketplaceHost,
   marketplaceIdForUrl,
   nameTaken,
   nextAccountName,
+  serverGroups,
 } from "./marketplace.js";
 
 describe("marketplace helpers", () => {
@@ -77,5 +79,26 @@ describe("marketplace helpers", () => {
     assert.equal(marketplaceIdForUrl("https://mcp.plane.so/http/mcp"), "plane");
     assert.equal(marketplaceIdForUrl("https://example.com/mcp"), "");
   });
-});
 
+  it("groups servers by app: catalog entry, then URL host, then local commands", () => {
+    const http = (id, name, url, enabled = true) => ({ id, name, enabled, transport: { kind: "http", url } });
+    const servers = [
+      http("a", "doppl", "https://mcp.render.com/mcp"),
+      { id: "b", name: "fs", enabled: true, transport: { kind: "stdio", command: "npx", args: [] } },
+      http("c", "vinci", "https://mcp.render.com/mcp", false),
+      http("d", "Sentry-vinci", "https://mcp.sentry.dev/other"),
+      http("e", "Custom", "https://example.com/mcp"),
+    ];
+    assert.deepEqual(
+      serverGroups(servers).map((g) => [g.id, g.name, g.servers.map((s) => s.id)]),
+      [
+        ["render", "Render", ["a", "c"]],
+        ["local", "Local commands", ["b"]],
+        ["sentry", "Sentry", ["d"]],
+        ["example.com", "example.com", ["e"]],
+      ],
+    );
+    assert.equal(groupSummary(servers.slice(0, 3)), "3 MCPs · 1 off");
+    assert.equal(groupSummary(servers.slice(0, 1)), "1 MCP");
+  });
+});
