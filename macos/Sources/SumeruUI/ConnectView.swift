@@ -62,6 +62,16 @@ struct ConnectView: View {
                     }
                 }
             }
+            if let shown {
+                Section {
+                    Text(agentPrompt(shown, env: env)).font(.callout.monospaced()).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } header: {
+                    Text("Or paste this prompt into \(shown.name)")
+                } footer: {
+                    HStack { Spacer(); Button("Copy Prompt") { model.copy(agentPrompt(real ?? shown, env: env)) } }
+                }
+            }
         }
         .formStyle(.grouped)
         .onChange(of: repo) { if shown?.id != agent { agent = shown?.id ?? agent } }

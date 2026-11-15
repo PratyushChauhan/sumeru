@@ -78,6 +78,15 @@ let servers = ["a", "b", "c"].map { Server(id: $0, name: $0, enabled: true, tran
         #expect(recipe("vscode", repo).text.contains(#""password": true"#))
         #expect(recipe("vscode", repo).text.contains(#""Authorization": "Bearer ${input:sumeru-work-token}""#))
     }
+
+    @Test func pasteInPrompt() {
+        #expect(agentPrompt(recipe("codex")) == "Install the Sumeru MCP server in Codex. Paste into ~/.codex/config.toml (replace any existing [mcp_servers.sumeru]):\n\n```\n\(recipe("codex").text)\n```\n\nKeep my other MCP servers and settings. Then tell me if Codex needs a restart to load it.")
+        #expect(agentPrompt(recipe("cursor")).contains("in Cursor. Paste into ~/.cursor/mcp.json:\n"))
+        let repo = agentInstalls(url: url, token: token, env: "SUMERU_TOKEN")[0]
+        let p = agentPrompt(repo, env: "SUMERU_TOKEN")
+        #expect(p.contains(repo.text) && !p.contains(token))
+        #expect(p.contains("reads the token from $SUMERU_TOKEN; never write the token into the repo."))
+    }
 }
 
 // Mirrors src/lib/keys.test.js.
