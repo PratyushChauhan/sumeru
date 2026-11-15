@@ -92,7 +92,7 @@ public func agentInstalls(url: String, token: String, server: String = "sumeru",
 /// Outputs: a prompt to paste into that agent so it installs Sumeru itself (`agentPrompt` in agents.js).
 public func agentPrompt(_ r: AgentRecipe, env: String = "") -> String {
     let how = r.hint.replacingOccurrences(of: "^Click Add to [^,]+, or p", with: "P", options: .regularExpression)
-    let secret = env.isEmpty ? "" : " It reads the token from $\(env); never write the token into the repo."
+    let secret = env.isEmpty ? "" : r.text.contains(env) ? " It reads the token from $\(env); never write the token into the repo." : " Never write the token into the repo."
     return "Install the Sumeru MCP server in \(r.name). \(how):\n\n```\n\(r.text)\n```\n\nKeep my other MCP servers and settings.\(secret) Then tell me if \(r.name) needs a restart to load it."
 }
 

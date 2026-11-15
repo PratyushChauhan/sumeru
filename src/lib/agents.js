@@ -62,7 +62,8 @@ export function agentInstalls(url, token, server = "sumeru", env = "") {
  */
 export function agentPrompt(r, env = "") {
   const how = r.hint.replace(/^Click Add to [^,]+, or p/, "P");
-  const secret = env ? ` It reads the token from $${env}; never write the token into the repo.` : "";
+  // VS Code's repo config prompts for the token instead of reading `env`.
+  const secret = !env ? "" : r.text.includes(env) ? ` It reads the token from $${env}; never write the token into the repo.` : " Never write the token into the repo.";
   return `Install the Sumeru MCP server in ${r.name}. ${how}:\n\n\`\`\`\n${r.text}\n\`\`\`\n\nKeep my other MCP servers and settings.${secret} Then tell me if ${r.name} needs a restart to load it.`;
 }
 

@@ -86,6 +86,8 @@ let servers = ["a", "b", "c"].map { Server(id: $0, name: $0, enabled: true, tran
         let p = agentPrompt(repo, env: "SUMERU_TOKEN")
         #expect(p.contains(repo.text) && !p.contains(token))
         #expect(p.contains("reads the token from $SUMERU_TOKEN; never write the token into the repo."))
+        let vscode = agentPrompt(agentInstalls(url: url, token: token, env: "SUMERU_TOKEN")[3], env: "SUMERU_TOKEN")
+        #expect(!vscode.contains("$SUMERU_TOKEN") && vscode.contains(" Never write the token into the repo."))
     }
 }
 

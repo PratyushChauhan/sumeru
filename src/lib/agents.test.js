@@ -90,5 +90,7 @@ describe("agent install recipes", () => {
     const p = agentPrompt(repo, "SUMERU_TOKEN");
     assert.ok(p.includes(repo.text) && !p.includes(TOKEN));
     assert.match(p, /reads the token from \$SUMERU_TOKEN; never write the token into the repo\./);
+    const vscode = agentPrompt(agentInstalls(URL_, TOKEN, "sumeru", "SUMERU_TOKEN")[3], "SUMERU_TOKEN");
+    assert.ok(!vscode.includes("$SUMERU_TOKEN") && vscode.includes(" Never write the token into the repo."));
   });
 });
