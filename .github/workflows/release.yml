@@ -8,16 +8,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Create the release once, so the Linux (Tauri) and macOS (native) jobs upload in parallel.
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+          [ -n "$TAG" ] || TAG="v$(jq -r .version src-tauri/tauri.conf.json)"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "sumeru $TAG" \
+            --notes "Desktop builds and portable CLI binaries for macOS and Linux."
+
   release:
+    needs: create-release
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Native SwiftUI app + headless universal engine (scripts/build-macos-app.sh).
           - platform: macos-latest
-            args: --target universal-apple-darwin
-            binary: src-tauri/target/universal-apple-darwin/release/sumeru
+            binary: dist-macos/sumeru
             cli_suffixes: darwin-arm64 darwin-x64
           - platform: ubuntu-22.04
             args: ""
@@ -48,8 +64,18 @@ jobs:
           workspaces: "./src-tauri -> target"
 
       - run: npm ci
+        if: matrix.platform == 'ubuntu-22.04'
+
+      - name: Build and upload the native macOS app
+        if: matrix.platform == 'macos-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          scripts/build-macos-app.sh dist-macos
+          gh release upload "v$(jq -r .version src-tauri/tauri.conf.json)" dist-macos/sumeru_*_universal.dmg --clobber
 
       - uses: tauri-apps/tauri-action@v1
+        if: matrix.platform == 'ubuntu-22.04'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
