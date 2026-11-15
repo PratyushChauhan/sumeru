@@ -14,7 +14,9 @@
     "test": "node --test src/lib/marketplace.test.js src/lib/agents.test.js src/lib/keys.test.js packages/cli/lib/*.test.js",
     "test:mcp": "python3 scripts/mcp_test_client.py --keyring",
     "version:bump": "node scripts/bump-version.mjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:macos": "scripts/test-macos.sh",
+    "build:macos": "scripts/build-macos-app.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2"
