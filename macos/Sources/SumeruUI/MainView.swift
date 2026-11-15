@@ -17,26 +17,23 @@ public enum Pane: String, CaseIterable, Identifiable {
     }
 }
 
-/// Main window: sidebar of sections, funnel status + Start/Stop in the toolbar.
+/// Main window: sidebar of panes (reopens on the last one), funnel status + Start/Stop in the toolbar.
 public struct MainView: View {
     @Bindable var model: AppModel
-    @State var section: Pane?
+    @AppStorage("pane") private var section: Pane = .mcps
 
-    /// Inputs: app model, initial section. Outputs: the main window content.
-    public init(model: AppModel, section: Pane = .mcps) {
-        self.model = model
-        _section = State(initialValue: section)
-    }
+    /// Inputs: app model. Outputs: the main window content.
+    public init(model: AppModel) { self.model = model }
 
     public var body: some View {
         NavigationSplitView {
-            List(Pane.allCases, selection: $section) { s in
+            List(Pane.allCases, selection: Binding<Pane?>(get: { section }, set: { if let p = $0 { section = p } })) { s in
                 Label(s.rawValue, systemImage: s.icon).tag(s)
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
             Group {
-                switch section ?? .mcps {
+                switch section {
                 case .mcps: ServersView(model: model)
                 case .marketplace: MarketplaceView(model: model)
                 case .keys: KeysView(model: model)
@@ -44,7 +41,7 @@ public struct MainView: View {
                 case .general: GeneralView(model: model)
                 }
             }
-            .navigationTitle((section ?? .mcps).rawValue)
+            .navigationTitle(section.rawValue)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) { FunnelToggle(model: model) }
             }
