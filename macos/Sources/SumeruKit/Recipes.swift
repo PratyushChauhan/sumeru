@@ -176,14 +176,14 @@ public struct ServerGroup: Identifiable, Equatable, Sendable {
 }
 
 /// Inputs: servers, catalog. Outputs: servers grouped by app (catalog entry by URL then host, else
-/// the URL host; stdio commands share "local"), in first-seen order (`serverGroups` in marketplace.js).
+/// the URL host as `host:<host>`; stdio commands share "local"), in first-seen order (`serverGroups` in marketplace.js).
 public func serverGroups(_ servers: [Server], _ catalog: [MarketplaceEntry]) -> [ServerGroup] {
     let host = { (u: String) in URL(string: u)?.host()?.lowercased() ?? u }
     var groups: [ServerGroup] = []
     for s in servers {
         let url = s.transport.url
         let entry = url.flatMap { u in catalog.first { $0.url == u } ?? catalog.first { host($0.url) == host(u) } }
-        let (id, name) = entry.map { ($0.id, $0.name) } ?? url.map { (host($0), host($0)) } ?? ("local", "Local commands")
+        let (id, name) = entry.map { ($0.id, $0.name) } ?? url.map { ("host:\(host($0))", host($0)) } ?? ("local", "Local commands")
         if let i = groups.firstIndex(where: { $0.id == id }) { groups[i].servers.append(s) }
         else { groups.append(ServerGroup(id: id, name: name, servers: [s])) }
     }

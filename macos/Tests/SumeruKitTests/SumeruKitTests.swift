@@ -138,10 +138,11 @@ let servers = ["a", "b", "c"].map { Server(id: $0, name: $0, enabled: true, tran
             http("c", "vinci", "https://mcp.render.com/mcp", false),
             http("d", "Sentry-vinci", "https://mcp.sentry.dev/other", true),
             http("e", "Custom", "https://example.com/mcp", true),
+            http("f", "Local box", "https://local/mcp", true),
         ]
         #expect(serverGroups(servers, catalog).map { [$0.id, $0.name] + $0.servers.map(\.id) } == [
             ["render", "Render", "a", "c"], ["local", "Local commands", "b"],
-            ["sentry", "Sentry", "d"], ["example.com", "example.com", "e"],
+            ["sentry", "Sentry", "d"], ["host:example.com", "example.com", "e"], ["host:local", "local", "f"],
         ])
         #expect(groupSummary(Array(servers.prefix(3))) == "3 MCPs · 1 off")
         #expect(groupSummary(Array(servers.prefix(1))) == "1 MCP")

@@ -37,7 +37,7 @@ export function nextAccountName(entry, servers) {
 
 /**
  * Inputs: configured servers. Outputs: `[{ id, name, servers }]` — servers grouped by the app they
- * belong to (catalog entry by URL then host, else the URL host; stdio commands share "local"), in
+ * belong to (catalog entry by URL then host, else the URL host as `host:<host>`; stdio commands share "local"), in
  * first-seen order.
  */
 export function serverGroups(servers) {
@@ -46,7 +46,7 @@ export function serverGroups(servers) {
     const url = s?.transport?.kind === "http" ? s.transport.url : "";
     const entry = url && listMarketplaceEntries().find((e) => e.id === marketplaceIdForUrl(url));
     const host = marketplaceHost(url);
-    const [id, name] = entry ? [entry.id, entry.name] : url ? [host, host] : ["local", "Local commands"];
+    const [id, name] = entry ? [entry.id, entry.name] : url ? [`host:${host}`, host] : ["local", "Local commands"];
     if (!groups.has(id)) groups.set(id, { id, name, servers: [] });
     groups.get(id).servers.push(s);
   }

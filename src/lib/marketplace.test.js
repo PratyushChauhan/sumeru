@@ -88,6 +88,7 @@ describe("marketplace helpers", () => {
       http("c", "vinci", "https://mcp.render.com/mcp", false),
       http("d", "Sentry-vinci", "https://mcp.sentry.dev/other"),
       http("e", "Custom", "https://example.com/mcp"),
+      http("f", "Local box", "https://local/mcp"),
     ];
     assert.deepEqual(
       serverGroups(servers).map((g) => [g.id, g.name, g.servers.map((s) => s.id)]),
@@ -95,7 +96,8 @@ describe("marketplace helpers", () => {
         ["render", "Render", ["a", "c"]],
         ["local", "Local commands", ["b"]],
         ["sentry", "Sentry", ["d"]],
-        ["example.com", "example.com", ["e"]],
+        ["host:example.com", "example.com", ["e"]],
+        ["host:local", "local", ["f"]],
       ],
     );
     assert.equal(groupSummary(servers.slice(0, 3)), "3 MCPs · 1 off");
