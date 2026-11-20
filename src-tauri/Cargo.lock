@@ -4064,6 +4064,7 @@ dependencies = [
  "glib",
  "http",
  "keyring",
+ "keyring-core",
  "open",
  "rand 0.9.5",
  "reqwest",

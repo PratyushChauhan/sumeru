@@ -98,6 +98,14 @@ impl ApiKey {
     pub fn allows(&self, mcp_id: &str) -> bool {
         self.mcp_ids.iter().any(|m| m == mcp_id) == (self.mode == KeyMode::Include)
     }
+
+    /// Inputs: mcp id, whether this key should reach it. Outputs: scope updated for either mode.
+    pub fn set_access(&mut self, mcp_id: &str, allow: bool) {
+        self.mcp_ids.retain(|m| m != mcp_id);
+        if allow == (self.mode == KeyMode::Include) {
+            self.mcp_ids.push(mcp_id.into());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -177,6 +185,37 @@ pub fn save_config(dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+/// Inputs: config directory, longest wait. Outputs: the store lock (`engine.lock`, held until
+/// the file is dropped or the process exits), or None if another process holds it past `wait`.
+/// Engines take it at startup and the CLI takes it to edit the store with no engine running.
+pub fn lock_store(dir: &Path, wait: std::time::Duration) -> Option<File> {
+    fs::create_dir_all(dir).ok()?;
+    let file = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("engine.lock"))
+        .ok()?;
+    let start = std::time::Instant::now();
+    while file.try_lock().is_err() {
+        if start.elapsed() >= wait {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Some(file)
+}
+
+/// Inputs: none. Outputs: secrets kept in process memory instead of the OS keychain from now on
+/// (`SUMERU_SECRETS=memory`, for tests and demos that must not touch the real keychain).
+pub fn use_memory_secrets() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = keyring::Entry::new(SERVICE, "init"); // installs the platform store, so ours wins
+        keyring_core::set_default_store(keyring_core::mock::Store::new().expect("memory store"));
+    });
 }
 
 /// Inputs: temp path and destination. Outputs: unit after replacing destination.
@@ -664,6 +703,36 @@ mod tests {
         assert!(key(KeyMode::Include, &["a"]).allows("a"));
         assert!(!key(KeyMode::Include, &["a"]).allows("b"));
         assert!(!key(KeyMode::Include, &[]).allows("a"));
+        for mode in [KeyMode::Exclude, KeyMode::Include] {
+            let mut k = key(mode, &[]);
+            k.set_access("a", true);
+            k.set_access("a", true);
+            assert!(k.allows("a") && k.mcp_ids.len() <= 1);
+            k.set_access("a", false);
+            assert!(!k.allows("a") && k.allows("b") == (mode == KeyMode::Exclude));
+        }
+    }
+
+    #[test]
+    fn store_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = lock_store(dir.path(), std::time::Duration::ZERO).unwrap();
+        assert!(lock_store(dir.path(), std::time::Duration::from_millis(100)).is_none());
+        drop(held);
+        assert!(lock_store(dir.path(), std::time::Duration::ZERO).is_some());
+    }
+
+    #[test]
+    fn memory_secrets_round_trip() {
+        use_memory_secrets();
+        let secrets = SecretMap {
+            bearer: Some("b".into()),
+            ..Default::default()
+        };
+        store_secrets("mem-test", &secrets).unwrap();
+        assert_eq!(get_bearer_secret("mem-test").as_deref(), Some("b"));
+        delete_secrets("mem-test", &[], &[], true).unwrap();
+        assert!(get_bearer_secret("mem-test").is_none());
     }
 
     #[test]
