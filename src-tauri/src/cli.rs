@@ -136,8 +136,9 @@ impl Client {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Err("config is locked by another sumeru process (the app starting, or another CLI command); \
-            retry, or restart Sumeru if it is running"
+        Err("config is locked by another sumeru process (the app starting, or another CLI command) \
+            and its engine.sock is not answering; retry, or restart Sumeru if it is running \
+            (its log says why the socket failed, e.g. a config dir path over ~100 bytes)"
             .into())
     }
 

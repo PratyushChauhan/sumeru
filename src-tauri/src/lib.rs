@@ -95,9 +95,10 @@ pub fn run_engine() {
             std::process::exit(1);
         }
     };
-    tokio::runtime::Builder::new_multi_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime")
-        .block_on(api::serve_engine(inner));
+        .expect("tokio runtime");
+    rt.block_on(api::serve_engine(inner));
+    rt.shutdown_background(); // don't wait on a background store-lock wait at exit
 }

@@ -53,7 +53,7 @@ Use a key's token in a Claude Code `headersHelper`:
 }
 ```
 
-Testing: `SUMERU_CONFIG_DIR=<dir>` points the CLI and engine at another config dir. `SUMERU_SECRETS=memory` keeps secrets in process memory instead of the keychain. Keep that dir path short: Unix socket paths are limited to about 100 bytes. That memory store only lasts as long as the engine process, so run the CLI against a running `sumeru engine`.
+Testing: `SUMERU_CONFIG_DIR=<dir>` points the CLI and engine at another config dir. Keep that dir path short: Unix socket paths are limited to about 100 bytes. `SUMERU_SECRETS=memory` keeps secrets in process memory instead of the keychain. It applies to the process that stores them, so set it on the engine: start `SUMERU_CONFIG_DIR=<dir> SUMERU_SECRETS=memory sumeru engine` and run the CLI with the same `SUMERU_CONFIG_DIR`. The memory store only lasts as long as that engine process.
 
 On Linux, the portable binary needs system WebKitGTK. For a casual desktop install, prefer the AppImage or `.deb` from [GitHub Releases](https://github.com/PratyushChauhan/sumeru/releases).
 

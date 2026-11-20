@@ -194,6 +194,8 @@ async fn upsert_server(app: &App, a: UpsertServer) -> Result<String, String> {
     let previous = edit_config(app, |cfg| {
         let pos = cfg.servers.iter().position(|s| s.id == id);
         validate_unique(cfg, &server, pos.is_some()).map_err(|e| e.to_string())?;
+        // Secrets first: if the keychain fails, the config is left unchanged.
+        store_secrets(&id, &a.secrets).map_err(|e| e.to_string())?;
         Ok(match pos {
             Some(i) => Some(std::mem::replace(&mut cfg.servers[i], server.clone())),
             None => {
@@ -203,7 +205,6 @@ async fn upsert_server(app: &App, a: UpsertServer) -> Result<String, String> {
         })
     })
     .await?;
-    store_secrets(&id, &a.secrets).map_err(|e| e.to_string())?;
     if let Some(prev) = &previous {
         prune_secrets(prev, &server).map_err(|e| e.to_string())?;
     }
@@ -398,19 +399,17 @@ async fn start_mcp_oauth(app: &App, a: StartOauth) -> Result<(), String> {
     )
     .await?;
     // The saved server (same URL) now sends the token; an unsaved GUI draft gets it on save.
-    let _ = edit_config(app, |cfg| {
+    edit_config(app, |cfg| {
         let server = cfg.servers.iter_mut().find(|s| s.id == a.id);
-        match server.map(|s| &mut s.transport) {
-            Some(McpTransport::Http {
-                url, has_bearer, ..
-            }) if *url == a.url => {
-                *has_bearer = true;
-                Ok(())
-            }
-            _ => Err(String::new()),
+        if let Some(McpTransport::Http {
+            url, has_bearer, ..
+        }) = server.map(|s| &mut s.transport)
+        {
+            *has_bearer |= *url == a.url;
         }
+        Ok(())
     })
-    .await;
+    .await?;
     app.pool.invalidate(&a.id).await;
     Ok(())
 }
