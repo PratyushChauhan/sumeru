@@ -25,6 +25,11 @@ pub const REDIRECT_URI: &str = "http://127.0.0.1:7342/oauth/callback";
 const BIND_ADDR: &str = "127.0.0.1:7342";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 
+tokio::task_local! {
+    /// Set by terminal callers (the CLI and its socket): receives the sign-in URL to print.
+    pub static SIGN_IN_URL: tokio::sync::mpsc::UnboundedSender<String>;
+}
+
 /// Inputs: none. Outputs: process-wide mutex serializing browser OAuth flows.
 fn oauth_mutex() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -156,7 +161,8 @@ pub async fn probe(url: &str, mcp_id: Option<&str>) -> Result<AuthProbe, String>
     })
 }
 
-/// Inputs: MCP URL, mcp id, optional client credentials, fresh_login (force provider login).
+/// Inputs: MCP URL, mcp id, optional client credentials, fresh_login (force provider login),
+/// open_browser (false skips the browser when a terminal caller got the URL via `SIGN_IN_URL`).
 /// Outputs: Ok after tokens are stored.
 pub async fn authorize(
     url: &str,
@@ -164,6 +170,7 @@ pub async fn authorize(
     client_id: Option<String>,
     client_secret: Option<String>,
     fresh_login: bool,
+    open_browser: bool,
 ) -> Result<(), String> {
     config::validate_http_url(url).map_err(|e| e.to_string())?;
     if mcp_id.trim().is_empty() {
@@ -236,7 +243,12 @@ pub async fn authorize(
         let _ = server.await;
     })));
 
-    open::that(&auth_url).map_err(|e| format!("failed to open browser: {e}"))?;
+    let shown = SIGN_IN_URL.try_with(|tx| tx.send(auth_url.clone()).is_ok()) == Ok(true);
+    if open_browser || !shown {
+        if let (Err(e), false) = (open::that(&auth_url), shown) {
+            return Err(format!("failed to open browser: {e}"));
+        }
+    }
 
     let callback = tokio::time::timeout(CALLBACK_TIMEOUT, rx).await;
     drop(_abort);

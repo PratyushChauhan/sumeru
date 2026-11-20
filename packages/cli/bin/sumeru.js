@@ -9,7 +9,7 @@ import { packageVersion, platformKey } from "../lib/platform.js";
  * Inputs: argv (without node/script). Outputs: process exit via spawn or print.
  */
 async function main(argv) {
-  if (argv.includes("--version") || argv.includes("-V")) {
+  if (argv[0] === "--version" || argv[0] === "-V") {
     process.stdout.write(`${packageVersion()}\n`);
     return;
   }

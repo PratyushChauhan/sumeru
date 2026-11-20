@@ -19,6 +19,9 @@ use crate::oauth;
 
 type App = Arc<AppInner>;
 
+/// Socket file in the config dir where the engine answers CLI requests (`sumeru servers …`).
+pub const SOCKET: &str = "engine.sock";
+
 #[derive(Serialize)]
 pub struct StatusDto {
     running: bool,
@@ -69,6 +72,20 @@ struct UpsertKey {
 }
 
 #[derive(Deserialize)]
+struct ServerEnabled {
+    id: String,
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyAccess {
+    key_id: String,
+    mcp_id: String,
+    allow: bool,
+}
+
+#[derive(Deserialize)]
 struct ProbeAuth {
     url: String,
     id: Option<String>,
@@ -81,6 +98,9 @@ struct StartOauth {
     id: String,
     client_id: Option<String>,
     client_secret: Option<String>,
+    /// Only report the sign-in URL to the CLI caller; do not open a browser.
+    #[serde(default)]
+    no_browser: bool,
 }
 
 #[derive(Deserialize)]
@@ -103,12 +123,14 @@ pub async fn dispatch(app: &App, method: &str, params: Value) -> Result<Value, S
         "get_status" => ok(get_status(app).await),
         "list_servers" => ok(list_servers(app).await),
         "upsert_server" => ok(upsert_server(app, p(params)?).await?),
+        "set_server_enabled" => ok(set_server_enabled(app, p(params)?).await?),
         "remove_server" => ok(remove_server(app, p::<IdParam>(params)?.id).await?),
         "start_funnel" => ok(gateway::start(app.clone()).await?),
         "stop_funnel" => ok(gateway::stop(app.clone()).await?),
         "list_keys" => ok(list_keys(app).await),
         "upsert_key" => ok(upsert_key(app, p(params)?).await?),
         "remove_key" => ok(remove_key(app, p::<IdParam>(params)?.id).await?),
+        "set_key_access" => ok(set_key_access(app, p(params)?).await?),
         "rotate_key" => ok(rotate_key(app, p::<IdParam>(params)?.id).await?),
         "test_server" => ok(test_server(app, p::<IdParam>(params)?.id).await?),
         "test_draft" => ok(test_draft(app, p(params)?).await?),
@@ -169,37 +191,73 @@ async fn upsert_server(app: &App, a: UpsertServer) -> Result<String, String> {
     };
     validate_server(&server).map_err(|e| e.to_string())?;
 
-    let mut staged = app.config.read().await.clone();
-    let previous = staged.servers.iter().find(|s| s.id == id).cloned();
-    validate_unique(&staged, &server, previous.is_some()).map_err(|e| e.to_string())?;
-    if let Some(existing) = staged.servers.iter_mut().find(|s| s.id == id) {
-        *existing = server.clone();
-    } else {
-        staged.servers.push(server.clone());
-    }
-    save_config(&app.dir, &staged).map_err(|e| e.to_string())?;
+    let previous = edit_config(app, |cfg| {
+        let pos = cfg.servers.iter().position(|s| s.id == id);
+        validate_unique(cfg, &server, pos.is_some()).map_err(|e| e.to_string())?;
+        Ok(match pos {
+            Some(i) => Some(std::mem::replace(&mut cfg.servers[i], server.clone())),
+            None => {
+                cfg.servers.push(server.clone());
+                None
+            }
+        })
+    })
+    .await?;
     store_secrets(&id, &a.secrets).map_err(|e| e.to_string())?;
     if let Some(prev) = &previous {
         prune_secrets(prev, &server).map_err(|e| e.to_string())?;
     }
-
-    *app.config.write().await = staged;
     app.pool.invalidate(&id).await;
     Ok(id)
 }
 
-/// Inputs: mcp id. Outputs: unit after removal (also pruned from every key's scope).
-async fn remove_server(app: &App, id: String) -> Result<(), String> {
+/// Inputs: app state, a change to the config (may fail). Outputs: the change's result once the
+/// config is saved and live. Edits run one at a time (GUI, CLI, parallel requests), so none is
+/// lost; slow follow-ups (pool, keychain) belong after this returns.
+async fn edit_config<T>(
+    app: &App,
+    change: impl FnOnce(&mut config::AppConfig) -> Result<T, String>,
+) -> Result<T, String> {
+    let wait = std::time::Duration::from_secs(10);
+    let _edit = tokio::time::timeout(wait, app.edits.lock())
+        .await
+        .map_err(|_| {
+            "config is locked by another Sumeru process; quit it or let its command finish"
+                .to_string()
+        })?;
     let mut staged = app.config.read().await.clone();
-    let Some(pos) = staged.servers.iter().position(|s| s.id == id) else {
-        return Err("unknown mcp".into());
-    };
-    let removed = staged.servers.remove(pos);
-    for key in &mut staged.keys {
-        key.mcp_ids.retain(|m| *m != id);
-    }
+    let out = change(&mut staged)?;
     save_config(&app.dir, &staged).map_err(|e| e.to_string())?;
     *app.config.write().await = staged;
+    Ok(out)
+}
+
+/// Inputs: mcp id, enabled flag. Outputs: unit after switching the saved server on or off.
+async fn set_server_enabled(app: &App, a: ServerEnabled) -> Result<(), String> {
+    edit_config(app, |cfg| {
+        let server = cfg.servers.iter_mut().find(|s| s.id == a.id);
+        server.ok_or("unknown mcp")?.enabled = a.enabled;
+        Ok(())
+    })
+    .await?;
+    app.pool.invalidate(&a.id).await;
+    Ok(())
+}
+
+/// Inputs: mcp id. Outputs: unit after removal (also pruned from every key's scope).
+async fn remove_server(app: &App, id: String) -> Result<(), String> {
+    let removed = edit_config(app, |cfg| {
+        let pos = cfg
+            .servers
+            .iter()
+            .position(|s| s.id == id)
+            .ok_or("unknown mcp")?;
+        cfg.keys
+            .iter_mut()
+            .for_each(|k| k.mcp_ids.retain(|m| *m != id));
+        Ok(cfg.servers.remove(pos))
+    })
+    .await?;
     app.pool.invalidate(&id).await;
     let cleanup = match &removed.transport {
         McpTransport::Stdio { env_keys, .. } => delete_secrets(&id, env_keys, &[], false),
@@ -241,16 +299,31 @@ async fn upsert_key(app: &App, a: UpsertKey) -> Result<String, String> {
         mode: a.mode,
         mcp_ids: a.mcp_ids,
     };
-    let mut staged = app.config.read().await.clone();
-    validate_key(&staged, &key).map_err(|e| e.to_string())?;
-    match staged.keys.iter_mut().find(|k| k.id == key.id) {
-        Some(existing) => *existing = key.clone(),
-        None => staged.keys.push(key.clone()),
-    }
-    save_config(&app.dir, &staged).map_err(|e| e.to_string())?;
-    *app.config.write().await = staged;
+    edit_config(app, |cfg| {
+        validate_key(cfg, &key).map_err(|e| e.to_string())?;
+        match cfg.keys.iter_mut().find(|k| k.id == key.id) {
+            Some(existing) => *existing = key.clone(),
+            None => cfg.keys.push(key.clone()),
+        }
+        Ok(())
+    })
+    .await?;
     app.reload_tokens().await?;
     Ok(key.id)
+}
+
+/// Inputs: key id, mcp id, whether the key should reach it. Outputs: unit after updating the
+/// key's scope in one edit (so parallel grants from scripts cannot overwrite each other).
+async fn set_key_access(app: &App, a: KeyAccess) -> Result<(), String> {
+    edit_config(app, |cfg| {
+        if !cfg.servers.iter().any(|s| s.id == a.mcp_id) {
+            return Err("unknown mcp".into());
+        }
+        let key = cfg.keys.iter_mut().find(|k| k.id == a.key_id);
+        key.ok_or("unknown key")?.set_access(&a.mcp_id, a.allow);
+        Ok(())
+    })
+    .await
 }
 
 /// Inputs: key id. Outputs: unit after deleting the key and its token (Default stays).
@@ -258,10 +331,11 @@ async fn remove_key(app: &App, id: String) -> Result<(), String> {
     if id == DEFAULT_KEY_ID {
         return Err("the Default key cannot be deleted".into());
     }
-    let mut staged = app.config.read().await.clone();
-    staged.keys.retain(|k| k.id != id);
-    save_config(&app.dir, &staged).map_err(|e| e.to_string())?;
-    *app.config.write().await = staged;
+    edit_config(app, |cfg| {
+        cfg.keys.retain(|k| k.id != id);
+        Ok(())
+    })
+    .await?;
     config::delete_key_token(&id).map_err(|e| e.to_string())?;
     app.reload_tokens().await
 }
@@ -306,13 +380,37 @@ async fn test_server(app: &App, id: String) -> Result<String, String> {
     Ok(format!("connected ({} tools)", tools.len()))
 }
 
-/// Inputs: MCP URL, mcp id, optional client credentials. Outputs: unit after browser sign-in.
+/// Inputs: MCP URL, mcp id, optional client credentials, no-browser flag. Outputs: unit after
+/// browser sign-in, with the saved server (if any) marked as carrying the bearer.
 /// Forces a fresh provider login when another MCP already uses the URL (another account).
 async fn start_mcp_oauth(app: &App, a: StartOauth) -> Result<(), String> {
     let fresh_login = app.config.read().await.servers.iter().any(|s| {
         s.id != a.id && matches!(&s.transport, McpTransport::Http { url: u, .. } if *u == a.url)
     });
-    oauth::authorize(&a.url, &a.id, a.client_id, a.client_secret, fresh_login).await?;
+    let open_browser = !a.no_browser;
+    oauth::authorize(
+        &a.url,
+        &a.id,
+        a.client_id,
+        a.client_secret,
+        fresh_login,
+        open_browser,
+    )
+    .await?;
+    // The saved server (same URL) now sends the token; an unsaved GUI draft gets it on save.
+    let _ = edit_config(app, |cfg| {
+        let server = cfg.servers.iter_mut().find(|s| s.id == a.id);
+        match server.map(|s| &mut s.transport) {
+            Some(McpTransport::Http {
+                url, has_bearer, ..
+            }) if *url == a.url => {
+                *has_bearer = true;
+                Ok(())
+            }
+            _ => Err(String::new()),
+        }
+    })
+    .await;
     app.pool.invalidate(&a.id).await;
     Ok(())
 }
@@ -344,15 +442,107 @@ async fn test_draft(app: &App, a: TestDraft) -> Result<String, String> {
         .map_err(|e| redact(&e.to_string()))
 }
 
-/// Inputs: app state. Outputs: unit after loading key tokens (may wait on a keychain prompt)
-/// and starting the gateway; failures are logged, not fatal (Resume retries the start).
+/// Inputs: app state (caller holds `app.edits`), longest wait for the store lock. Outputs: true
+/// once this process holds the lock, has re-read the config (a CLI may have edited it) and
+/// serves `engine.sock`.
+async fn own_store(app: &App, wait: std::time::Duration) -> bool {
+    let dir = app.dir.clone();
+    let Ok(Some(lock)) = tokio::task::spawn_blocking(move || config::lock_store(&dir, wait)).await
+    else {
+        return false;
+    };
+    match config::load_config(&app.dir) {
+        Ok(cfg) => *app.config.write().await = cfg,
+        Err(err) => eprintln!("sumeru config reload failed: {err}"),
+    }
+    app.pool.clear().await; // a CLI may have changed secrets behind cached connections
+    std::mem::forget(lock); // held until the process exits, whatever happens to the socket
+    tokio::spawn(serve_socket(app.clone()));
+    true
+}
+
+/// Inputs: app state. Outputs: unit after taking the store lock (waits up to 5 s for a CLI edit,
+/// else keeps waiting in the background; meanwhile config edits wait up to 10 s, then fail), loading key
+/// tokens (may wait on a keychain prompt) and starting the gateway; failures are logged, not
+/// fatal (Resume retries the start).
 pub async fn autostart_gateway(app: App) {
+    let edits = app.edits.clone().lock_owned().await;
+    if own_store(&app, std::time::Duration::from_secs(5)).await {
+        drop(edits);
+    } else {
+        eprintln!("sumeru: config locked by another process; edits fail until it is free");
+        let app = app.clone();
+        tokio::spawn(async move {
+            let _edits = edits;
+            if own_store(&app, std::time::Duration::MAX).await {
+                let _ = app.reload_tokens().await;
+            }
+        });
+    }
     let started = match app.reload_tokens().await {
         Ok(()) => gateway::start(app).await,
         Err(err) => Err(err),
     };
     if let Err(err) = started {
         eprintln!("sumeru auto-start failed: {err}");
+    }
+}
+
+/// Inputs: app state (this process holds the store lock). Outputs: sets the config dir to 0700 and answers CLI connections on `engine.sock` (0600; only peers whose uid
+/// owns the config dir) until the process exits.
+#[cfg(unix)]
+pub async fn serve_socket(app: App) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let path = app.dir.join(SOCKET);
+    let _ = std::fs::set_permissions(&app.dir, std::fs::Permissions::from_mode(0o700));
+    let _ = std::fs::remove_file(&path); // stale from a crash; we own the lock, so no live engine
+    let listener = match tokio::net::UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(err) => return eprintln!("sumeru: CLI socket failed: {err}"),
+    };
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    let owner = std::fs::metadata(&app.dir).map(|m| m.uid()).ok();
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) if stream.peer_cred().ok().map(|c| c.uid()) == owner => {
+                tokio::spawn(serve_conn(app.clone(), stream));
+            }
+            Ok(_) => {}
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(100)).await, // e.g. EMFILE
+        }
+    }
+}
+
+/// Inputs: app state. Outputs: none (unsupported platform: no CLI socket).
+#[cfg(not(unix))]
+pub async fn serve_socket(_app: App) {}
+
+/// Inputs: app state, one CLI connection. Outputs: a reply line per request line; a sign-in URL
+/// raised while a request runs goes out first as `{"sign_in_url": …}`. Requests run to the end,
+/// except a sign-in whose client hangs up (Ctrl-C): it is dropped, freeing the OAuth flow.
+#[cfg(unix)]
+async fn serve_conn(app: App, stream: tokio::net::UnixStream) {
+    let (read, mut write) = stream.into_split();
+    let mut lines = BufReader::new(read).lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let req = serde_json::from_str::<Value>(&line).unwrap_or_default();
+        let sign_in = req["method"] == "start_mcp_oauth";
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let reply = oauth::SIGN_IN_URL.scope(tx, handle_line(&app, &line));
+        tokio::pin!(reply);
+        let reply = loop {
+            tokio::select! {
+                reply = &mut reply => break reply,
+                Ok(None) | Err(_) = lines.next_line(), if sign_in => return,
+                Some(url) = rx.recv() => {
+                    let event = json!({ "sign_in_url": url }).to_string() + "\n";
+                    let _ = write.write_all(event.as_bytes()).await;
+                }
+            }
+        };
+        if write.write_all((reply + "\n").as_bytes()).await.is_err() {
+            break;
+        }
     }
 }
 

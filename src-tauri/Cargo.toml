@@ -43,6 +43,7 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "form"] }
 keyring = { version = "4", features = ["v1"] }
+keyring-core = "1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 rand = "0.9"

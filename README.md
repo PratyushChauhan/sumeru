@@ -53,7 +53,11 @@ npm i -g sumeru-mcp
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
 sumeru gui         # desktop UI (on macOS: opens Sumeru.app)
+sumeru servers add --name Granola --url https://mcp.granola.ai/mcp && sumeru servers login Granola
+sumeru keys grant "work repo" Granola && sumeru keys token "work repo"
 ```
+
+`sumeru servers …` / `sumeru keys …` let agents and scripts manage MCPs and API keys without the GUI. Every command takes `--json`. While the app runs, they go through its engine. The [CLI docs](docs/cli.md#manage-mcps-and-keys) have the full list.
 
 Cursor / MCP host stdio config example:
 
