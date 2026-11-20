@@ -69,6 +69,8 @@
   }
 
   onMount(() => {
+    // Pick up edits made elsewhere (e.g. `sumeru servers …`) when the window comes back.
+    window.addEventListener("focus", () => refresh().catch(console.error));
     (async () => {
       // Up to 2 min: startup waits on the keychain (a prompt on first launch or after updates).
       for (let i = 0; i < 480; i++) {

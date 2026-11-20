@@ -1,4 +1,5 @@
 mod api;
+mod cli;
 mod config;
 #[cfg(feature = "gui")]
 mod desktop;
@@ -14,14 +15,20 @@ use std::sync::Arc;
 use config::DEFAULT_KEY_ID;
 use gateway::AppInner;
 
+pub use cli::run as run_cli;
+pub use config::use_memory_secrets;
 #[cfg(feature = "gui")]
 pub use desktop::run;
 
 /// Bundle id from `tauri.conf.json` — must match GUI `app_config_dir()`.
 const APP_IDENTIFIER: &str = "com.sumeru.app";
 
-/// Inputs: none. Outputs: same path as Tauri `app_config_dir()/sumeru`, or error.
+/// Inputs: none (`SUMERU_CONFIG_DIR` overrides). Outputs: same path as Tauri
+/// `app_config_dir()/sumeru`, or error.
 fn sumeru_config_dir() -> Result<PathBuf, String> {
+    if let Some(dir) = std::env::var_os("SUMERU_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return Ok(dir.into());
+    }
     let base = dirs::config_dir().ok_or_else(|| {
         "could not resolve app config directory (no HOME / platform config path)".to_string()
     })?;
@@ -88,9 +95,10 @@ pub fn run_engine() {
             std::process::exit(1);
         }
     };
-    tokio::runtime::Builder::new_multi_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("tokio runtime")
-        .block_on(api::serve_engine(inner));
+        .expect("tokio runtime");
+    rt.block_on(api::serve_engine(inner));
+    rt.shutdown_background(); // don't wait on a background store-lock wait at exit
 }

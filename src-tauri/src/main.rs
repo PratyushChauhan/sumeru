@@ -4,9 +4,18 @@
 #[cfg(all(target_os = "linux", feature = "gui"))]
 mod linux_wayland;
 
-/// Inputs: process args. Outputs: stdio MCP (`mcp-stdio`), the JSON engine for the native
-/// macOS app (`engine`), else the Tauri desktop UI (only in `gui` builds).
+/// Inputs: process args (`SUMERU_SECRETS=memory` keeps secrets off the keychain). Outputs: the
+/// CLI (`servers …`, `keys …`), stdio MCP (`mcp-stdio`), the JSON engine for the native macOS
+/// app (`engine`), else the Tauri desktop UI (only in `gui` builds).
 fn main() {
+    if std::env::var("SUMERU_SECRETS").as_deref() == Ok("memory") {
+        sumeru_lib::use_memory_secrets();
+    }
+    let command = std::env::args().skip(1).find(|a| !a.starts_with('-')); // `--json` may lead
+    if matches!(command.as_deref(), Some("servers" | "keys")) {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        std::process::exit(sumeru_lib::run_cli(&args));
+    }
     if std::env::args().any(|a| a == "mcp-stdio") {
         return sumeru_lib::run_mcp_stdio();
     }
@@ -21,7 +30,7 @@ fn main() {
     }
     #[cfg(not(feature = "gui"))]
     {
-        eprintln!("sumeru: headless build; run `sumeru mcp-stdio` or `sumeru engine`");
+        eprintln!("sumeru: headless build; run `sumeru mcp-stdio`, `sumeru servers`, `sumeru keys` or `sumeru engine`");
         std::process::exit(2);
     }
 }

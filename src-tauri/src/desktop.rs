@@ -81,11 +81,7 @@ pub fn run() {
             Some(vec!["--hidden"]),
         ))
         .setup(|app| {
-            let dir = app
-                .path()
-                .app_config_dir()
-                .expect("app config dir")
-                .join("sumeru");
+            let dir = crate::sumeru_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             let inner = Arc::new(AppInner::new(dir).map_err(|e| e.to_string())?);
             app.manage(State(inner.clone()));

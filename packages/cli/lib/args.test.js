@@ -28,6 +28,8 @@ describe("resolveNativeArgs", () => {
   it("passes other argv through unchanged", () => {
     assert.deepEqual(resolveNativeArgs(["--hidden"]), ["--hidden"]);
     assert.deepEqual(resolveNativeArgs(["doctor"]), ["doctor"]);
+    assert.deepEqual(resolveNativeArgs(["keys", "token", "work repo"]), ["keys", "token", "work repo"]);
+    assert.deepEqual(resolveNativeArgs(["servers", "list", "--json"]), ["servers", "list", "--json"]);
   });
 });
 

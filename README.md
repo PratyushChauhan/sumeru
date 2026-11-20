@@ -41,7 +41,7 @@ npm test              # JS tests; Rust: cargo test --lib (in src-tauri)
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.2`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
+- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.3`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
@@ -53,7 +53,11 @@ npm i -g sumeru-mcp
 sumeru doctor
 sumeru mcp-stdio   # or just: sumeru
 sumeru gui         # desktop UI (on macOS: opens Sumeru.app)
+sumeru servers add --name Granola --url https://mcp.granola.ai/mcp && sumeru servers login Granola
+sumeru keys add "work repo" && sumeru keys grant "work repo" Granola && sumeru keys token "work repo"
 ```
+
+`sumeru servers …` / `sumeru keys …` let agents and scripts manage MCPs and API keys without the GUI. Every command takes `--json`. While the app runs, they go through its engine. The [CLI docs](docs/cli.md#manage-mcps-and-keys) have the full list.
 
 Cursor / MCP host stdio config example:
 

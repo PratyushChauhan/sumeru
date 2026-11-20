@@ -57,6 +57,10 @@ pub struct AppInner {
     #[cfg_attr(not(feature = "gui"), allow(dead_code))] // set by the Tauri exit handler
     pub exiting: Arc<AtomicBool>,
     lifecycle: Arc<Mutex<()>>,
+    /// Serializes config edits (read-modify-save), so parallel GUI/CLI requests never lose one.
+    pub edits: Arc<Mutex<()>>,
+    /// Serializes token reloads, so each sees the latest keys and none mints a second token.
+    reloads: Arc<Mutex<()>>,
     shutdown: Arc<RwLock<Option<CancellationToken>>>,
     server_task: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
@@ -73,6 +77,8 @@ impl AppInner {
             running: Arc::new(AtomicBool::new(false)),
             exiting: Arc::new(AtomicBool::new(false)),
             lifecycle: Arc::new(Mutex::new(())),
+            edits: Arc::new(Mutex::new(())),
+            reloads: Arc::new(Mutex::new(())),
             shutdown: Arc::new(RwLock::new(None)),
             server_task: Arc::new(RwLock::new(None)),
         })
@@ -91,6 +97,7 @@ impl AppInner {
     /// Inputs: none. Outputs: unit after re-reading every key's token (at startup, after key edits).
     /// Runs on a blocking thread without holding the config lock, so a keychain prompt waits alone.
     pub async fn reload_tokens(&self) -> Result<(), String> {
+        let _one = self.reloads.lock().await;
         let cfg = self.config.read().await.clone();
         let tokens = tokio::task::spawn_blocking(move || config::key_tokens(&cfg))
             .await
@@ -578,6 +585,8 @@ mod tests {
             running: Arc::new(AtomicBool::new(false)),
             exiting: Arc::new(AtomicBool::new(false)),
             lifecycle: Arc::new(Mutex::new(())),
+            edits: Arc::new(Mutex::new(())),
+            reloads: Arc::new(Mutex::new(())),
             shutdown: Arc::new(RwLock::new(None)),
             server_task: Arc::new(RwLock::new(None)),
         })
