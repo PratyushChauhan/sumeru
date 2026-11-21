@@ -277,18 +277,46 @@ pub async fn authorize(
     {
         let _ = config::store_oauth_host_client(&host, &client_id, client_secret.as_deref());
     }
-    config::store_secrets(
-        mcp_id,
-        &SecretMap {
-            bearer: Some(tokens.access_token),
-            ..Default::default()
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    if let Some(refresh) = tokens.refresh_token {
-        config::store_oauth_refresh(mcp_id, &refresh).map_err(|e| e.to_string())?;
+    save_tokens(mcp_id, tokens)
+}
+
+/// Inputs: mcp id, issued tokens. Outputs: Ok after storing the access token as the bearer and
+/// any (possibly rotated) refresh token.
+fn save_tokens(mcp_id: &str, tokens: IssuedTokens) -> Result<(), String> {
+    let bearer = SecretMap {
+        bearer: Some(tokens.access_token),
+        ..Default::default()
+    };
+    config::store_secrets(mcp_id, &bearer).map_err(|e| e.to_string())?;
+    match tokens.refresh_token {
+        Some(refresh) => config::store_oauth_refresh(mcp_id, &refresh).map_err(|e| e.to_string()),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// Inputs: MCP URL and id. Outputs: Ok(true) after trading the saved refresh token for a new
+/// access token (stored as the bearer), Ok(false) when no refresh token or client is saved.
+pub async fn refresh(url: &str, mcp_id: &str) -> Result<bool, String> {
+    let (Some(refresh), Some(client_id)) = (
+        config::get_oauth_refresh(mcp_id),
+        config::get_oauth_client_id(mcp_id),
+    ) else {
+        return Ok(false);
+    };
+    let (_, as_meta) = discover(url)
+        .await?
+        .ok_or_else(|| "this MCP no longer advertises OAuth".to_string())?;
+    let mut form = HashMap::from([
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh),
+        ("client_id", client_id),
+        ("resource", url.to_string()),
+    ]);
+    if let Some(secret) = config::get_oauth_client_secret(mcp_id) {
+        form.insert("client_secret", secret);
+    }
+    save_tokens(mcp_id, token_request(&as_meta.token_endpoint, &form).await?)?;
+    Ok(true)
 }
 
 struct IssuedTokens {
@@ -530,7 +558,6 @@ async fn exchange_code(
     verifier: &str,
     resource: &str,
 ) -> Result<IssuedTokens, String> {
-    let client = http_client()?;
     let mut form = HashMap::new();
     form.insert("grant_type", "authorization_code".to_string());
     form.insert("code", code.to_string());
@@ -541,9 +568,18 @@ async fn exchange_code(
     if let Some(secret) = client_secret {
         form.insert("client_secret", secret.to_string());
     }
-    let resp = client
+    token_request(token_endpoint, &form).await
+}
+
+/// Inputs: token endpoint, form fields (any grant). Outputs: access token and optional refresh
+/// token, or a redacted error.
+async fn token_request(
+    token_endpoint: &str,
+    form: &HashMap<&str, String>,
+) -> Result<IssuedTokens, String> {
+    let resp = http_client()?
         .post(token_endpoint)
-        .form(&form)
+        .form(form)
         .send()
         .await
         .map_err(|e| redact(&e.to_string()))?;
