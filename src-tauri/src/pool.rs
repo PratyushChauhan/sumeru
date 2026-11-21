@@ -188,6 +188,7 @@ async fn refresh_bearer(server: &McpServer) -> Result<bool, ConfigError> {
 
 /// Inputs: server definition. Outputs: connected RunningService.
 async fn connect(server: &McpServer) -> Result<RunningService<RoleClient, ()>, ConfigError> {
+    config::reload_secrets(); // another process may have saved new credentials since
     match &server.transport {
         McpTransport::Stdio {
             command,
