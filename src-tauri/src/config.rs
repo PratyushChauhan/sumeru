@@ -267,13 +267,16 @@ pub fn reload_secrets() {
 
 /// Inputs: none. Outputs: a cross-process lock (`vault.lock` in the config dir) held while a
 /// process migrates or rewrites the vault, so one process can't overwrite another's write.
-/// None in memory mode or if the lock can't be taken (10 min covers a slow migration prompt).
-fn lock_vault() -> Option<File> {
+/// Ok(None) in memory mode; Err if the lock can't be taken (10 min covers a slow migration
+/// prompt), so no process touches the vault unlocked.
+fn lock_vault() -> Result<Option<File>, ConfigError> {
     if MEMORY_SECRETS.load(std::sync::atomic::Ordering::SeqCst) {
-        return None;
+        return Ok(None);
     }
-    let dir = crate::sumeru_config_dir().ok()?;
+    let dir = crate::sumeru_config_dir().map_err(ConfigError::msg)?;
     lock_file(&dir, "vault.lock", std::time::Duration::from_secs(600))
+        .map(Some)
+        .ok_or_else(|| ConfigError::msg("couldn't lock the secret vault; retry"))
 }
 
 /// Inputs: keychain service. Outputs: all secrets from its single `vault` item. The first run
@@ -312,7 +315,7 @@ fn load_vault(service: &str) -> Result<BTreeMap<String, String>, ConfigError> {
 fn vault_get(user: &str) -> Result<Option<String>, ConfigError> {
     let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
     if cache.is_none() {
-        let _lock = lock_vault();
+        let _lock = lock_vault()?;
         *cache = Some(load_vault(SERVICE)?);
     }
     Ok(cache
@@ -325,7 +328,7 @@ fn vault_get(user: &str) -> Result<Option<String>, ConfigError> {
 /// Inputs: edit applied to a fresh copy of every secret. Outputs: unit after one keychain write.
 fn edit_vault(edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), ConfigError> {
     let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
-    let _lock = lock_vault();
+    let _lock = lock_vault()?;
     let mut map = load_vault(SERVICE)?;
     let before = map.clone();
     edit(&mut map);
