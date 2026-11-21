@@ -14,7 +14,7 @@ Each key installs under its own server name (`sumeru` for Default, `sumeru-<key 
 
 ## Default key
 
-Every install has a **Default** key that reaches all MCPs. It keeps the original `endpoint-token` keychain entry, so agents configured before keys existed keep working. You can rescope it, but not delete it.
+Every install has a **Default** key that reaches all MCPs. It keeps the original `endpoint-token` secret, so agents configured before keys existed keep working. You can rescope it, but not delete it.
 
 ## Stdio
 

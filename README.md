@@ -19,7 +19,7 @@ Formerly **funnelit**. Local desktop MCP funnel. Add N upstream MCP servers (std
 
 ## Install
 
-- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **Sumeru** to **Applications**. It's a native menu-bar app: the Sumeru icon in the menu bar shows status, copies the endpoint, and opens the main window. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. If it still won't open, run `xattr -dr com.apple.quarantine /Applications/Sumeru.app` in Terminal. On first launch and after updates, macOS may ask to let **sumeru** (the bundled engine) use its keychain item; enter your password and click **Always Allow** (the endpoint starts once you answer).
+- **macOS** (Apple Silicon and Intel): download `sumeru_<version>_universal.dmg` from the [latest release](https://github.com/PratyushChauhan/sumeru/releases/latest), open it, and drag **Sumeru** to **Applications**. It's a native menu-bar app: the Sumeru icon in the menu bar shows status, copies the endpoint, and opens the main window. Sumeru isn't notarized yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and click **Open Anyway**. If it still won't open, run `xattr -dr com.apple.quarantine /Applications/Sumeru.app` in Terminal. On first launch and after updates, macOS may ask to let **sumeru** (the bundled engine) use its keychain item; enter your password and click **Always Allow** (once: all secrets share one item; the first launch after upgrading from 0.4.4 or earlier asks once per old item while it moves them over) (the endpoint starts once you answer).
 - **Linux**: AppImage, `.deb` or `.rpm` from the same release.
 - **npm**: `npm i -g sumeru-mcp && sumeru gui` ([npm CLI](#npm-cli)).
 
@@ -41,7 +41,7 @@ npm test              # JS tests; Rust: cargo test --lib (in src-tauri)
 
 CI:
 - PRs / manual: `.github/workflows/build.yml` uploads installers as workflow artifacts
-- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.4`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
+- Push to `main`: `.github/workflows/release.yml` builds the native macOS app (`scripts/build-macos-app.sh`: SwiftUI shell in `macos/` + headless Rust engine, one ad-hoc signed universal DMG) and the Linux Tauri app, and publishes them to a [GitHub Release](https://github.com/PratyushChauhan/sumeru/releases) tagged `v__VERSION__` from `tauri.conf.json` (currently `v0.4.5`). Re-pushes with the same version update that release’s assets. Releases also include portable CLI binaries (`sumeru-v*-linux-x64`, `darwin-arm64`, `darwin-x64`) plus `.sha256` checksums. The workflow also publishes the [`sumeru-mcp`](packages/cli) npm package through npm trusted publishing (GitHub OIDC, no token secret), skipping versions already on npm.
 - Bump release version in all package files: `npm run version:bump -- patch` (or `minor` / `major` / `0.2.12`)
 
 ## npm CLI
@@ -156,7 +156,7 @@ The **Marketplace** tab lists a bundled curated catalog of HTTP MCPs (`src/lib/m
 ## Storage
 
 - Config: app config dir `/sumeru/servers.json`
-- Secrets: OS keychain service `sumeru` (API key tokens — Default key: `endpoint-token`, others: `key:<id>` — plus env/header/bearer values and OAuth client + refresh tokens)
+- Secrets: one OS keychain item, service `sumeru` / account `vault`, holding a JSON map of every secret (API key tokens — Default key: `endpoint-token`, others: `key:<id>` — plus env/header/bearer values and OAuth client + refresh tokens). One item means one keychain prompt per update instead of one per secret; older per-secret items are moved into it on first launch.
 
 ## Security notes
 

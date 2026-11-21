@@ -32,12 +32,11 @@ PROTOCOL = "2025-06-18"
 
 
 def keyring_token() -> str:
-    """Inputs: none. Outputs: endpoint bearer token from OS keyring."""
+    """Inputs: none. Outputs: Default key token from the OS keyring's `sumeru`/`vault` item."""
     out = subprocess.check_output(
-        ["secret-tool", "lookup", "service", "sumeru", "username", "endpoint-token"],
-        text=True,
+        ["secret-tool", "lookup", "service", "sumeru", "username", "vault"], text=True
     )
-    return out.strip()
+    return json.loads(out)["endpoint-token"]
 
 
 class McpClient:

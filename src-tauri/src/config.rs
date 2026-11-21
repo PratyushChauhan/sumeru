@@ -1,4 +1,4 @@
-//! Persisted MCP definitions and OS-keychain secrets.
+//! Persisted MCP definitions and OS-keychain secrets (one `vault` item, see `read_vault`).
 
 use std::{
     collections::{BTreeMap, HashSet},
@@ -13,6 +13,8 @@ use url::Url;
 
 const SERVICE: &str = "sumeru";
 const TOKEN_USER: &str = "endpoint-token";
+/// Keychain user of the one item holding every secret as a JSON map (user id -> value).
+const VAULT_USER: &str = "vault";
 /// Id of the built-in key that reaches every MCP; its token is the legacy `endpoint-token`.
 pub const DEFAULT_KEY_ID: &str = "default";
 pub const ENDPOINT_URL: &str = "http://127.0.0.1:7341/mcp";
@@ -215,6 +217,7 @@ pub fn use_memory_secrets() {
     ONCE.call_once(|| {
         let _ = keyring::Entry::new(SERVICE, "init"); // installs the platform store, so ours wins
         keyring_core::set_default_store(keyring_core::mock::Store::new().expect("memory store"));
+        *VAULT.lock().unwrap_or_else(|e| e.into_inner()) = None;
     });
 }
 
@@ -245,24 +248,74 @@ fn token_user(key_id: &str) -> String {
     }
 }
 
+/// Every secret, cached after the first keychain read (see `read_vault`).
+static VAULT: std::sync::Mutex<Option<BTreeMap<String, String>>> = std::sync::Mutex::new(None);
+
+/// Inputs: none. Outputs: all secrets from the single `vault` keychain item. The first run moves
+/// legacy one-item-per-secret entries into it, so macOS asks once per app update, not per secret.
+fn read_vault() -> Result<BTreeMap<String, String>, ConfigError> {
+    let vault = keyring::Entry::new(SERVICE, VAULT_USER)?;
+    match vault.get_password() {
+        Ok(json) => return Ok(serde_json::from_str(&json)?),
+        Err(keyring::Error::NoEntry) => {}
+        Err(err) => return Err(err.into()),
+    }
+    let legacy: Vec<_> = keyring_core::Entry::search(&[("service", SERVICE)].into())?
+        .into_iter()
+        .filter_map(|e| Some((e.get_specifiers()?, e)))
+        .filter(|((s, u), _)| s == SERVICE && u != VAULT_USER)
+        .collect();
+    let mut map = BTreeMap::new();
+    for ((_, user), entry) in &legacy {
+        match entry.get_password() {
+            Ok(value) => drop(map.insert(user.clone(), value)),
+            Err(keyring::Error::NoEntry) => {}
+            Err(err) => return Err(err.into()),
+        }
+    }
+    vault.set_password(&serde_json::to_string(&map)?)?;
+    legacy.iter().for_each(|(_, e)| drop(e.delete_credential()));
+    Ok(map)
+}
+
+/// Inputs: keyring user id. Outputs: its non-empty secret, or None; Err only if the keychain fails.
+fn vault_get(user: &str) -> Result<Option<String>, ConfigError> {
+    let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
+    if cache.is_none() {
+        *cache = Some(read_vault()?);
+    }
+    Ok(cache
+        .as_ref()
+        .and_then(|m| m.get(user))
+        .filter(|s| !s.is_empty())
+        .cloned())
+}
+
+/// Inputs: edit applied to a fresh copy of every secret. Outputs: unit after one keychain write.
+fn edit_vault(edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), ConfigError> {
+    let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = read_vault()?;
+    let before = map.clone();
+    edit(&mut map);
+    if map != before {
+        keyring::Entry::new(SERVICE, VAULT_USER)?.set_password(&serde_json::to_string(&map)?)?;
+    }
+    *cache = Some(map);
+    Ok(())
+}
+
 /// Inputs: key id. Outputs: existing or newly generated token for the key.
 pub fn ensure_key_token(key_id: &str) -> Result<String, ConfigError> {
-    let entry = keyring::Entry::new(SERVICE, &token_user(key_id))?;
-    match entry.get_password() {
-        Ok(token) if !token.is_empty() => Ok(token),
-        Ok(_) | Err(keyring::Error::NoEntry) => {
-            let token = generate_token();
-            entry.set_password(&token)?;
-            Ok(token)
-        }
-        Err(err) => Err(err.into()),
+    if let Some(token) = vault_get(&token_user(key_id))? {
+        return Ok(token);
     }
+    rotate_key_token(key_id)
 }
 
 /// Inputs: key id. Outputs: regenerated token for the key (the old one stops working).
 pub fn rotate_key_token(key_id: &str) -> Result<String, ConfigError> {
     let token = generate_token();
-    keyring::Entry::new(SERVICE, &token_user(key_id))?.set_password(&token)?;
+    set_secret(&token_user(key_id), &token)?;
     Ok(token)
 }
 
@@ -292,52 +345,43 @@ fn secret_user(kind: &str, mcp_id: &str, key: &str) -> String {
 
 /// Inputs: mcp id, env/header/bearer secrets. Outputs: unit on success.
 pub fn store_secrets(mcp_id: &str, secrets: &SecretMap) -> Result<(), ConfigError> {
-    for (k, v) in &secrets.env {
-        if v.is_empty() {
-            continue;
-        }
-        keyring::Entry::new(SERVICE, &secret_user("env", mcp_id, k))?.set_password(v)?;
-    }
-    for (k, v) in &secrets.headers {
-        if v.is_empty() {
-            continue;
-        }
-        keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, k))?.set_password(v)?;
-    }
-    if let Some(bearer) = &secrets.bearer {
-        if !bearer.is_empty() {
-            keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, "authorization_bearer"))?
-                .set_password(bearer)?;
-        }
-    }
-    Ok(())
+    let env = secrets
+        .env
+        .iter()
+        .map(|(k, v)| (secret_user("env", mcp_id, k), v));
+    let hdr = secrets
+        .headers
+        .iter()
+        .map(|(k, v)| (secret_user("hdr", mcp_id, k), v));
+    let bearer = secrets
+        .bearer
+        .iter()
+        .map(|v| (secret_user("hdr", mcp_id, "authorization_bearer"), v));
+    let all: Vec<_> = env
+        .chain(hdr)
+        .chain(bearer)
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    edit_vault(|m| m.extend(all.into_iter().map(|(k, v)| (k, v.clone()))))
 }
 
 /// Inputs: keyring user id. Outputs: Ok when deleted or already absent.
 fn delete_secret_entry(user: &str) -> Result<(), ConfigError> {
-    match keyring::Entry::new(SERVICE, user).and_then(|e| e.delete_credential()) {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(err.into()),
-    }
+    edit_vault(|m| drop(m.remove(user)))
 }
 
-/// Inputs: mcp id and key names. Outputs: Ok(()) or first non-NoEntry keyring error.
+/// Inputs: mcp id and key names. Outputs: Ok(()) or the keychain error.
 pub fn delete_secrets(
     mcp_id: &str,
     env_keys: &[String],
     header_keys: &[String],
     has_bearer: bool,
 ) -> Result<(), ConfigError> {
-    for k in env_keys {
-        delete_secret_entry(&secret_user("env", mcp_id, k))?;
-    }
-    for k in header_keys {
-        delete_secret_entry(&secret_user("hdr", mcp_id, k))?;
-    }
-    if has_bearer {
-        delete_secret_entry(&secret_user("hdr", mcp_id, "authorization_bearer"))?;
-    }
-    Ok(())
+    let env = env_keys.iter().map(|k| secret_user("env", mcp_id, k));
+    let hdr = header_keys.iter().map(|k| secret_user("hdr", mcp_id, k));
+    let bearer = has_bearer.then(|| secret_user("hdr", mcp_id, "authorization_bearer"));
+    let users: Vec<_> = env.chain(hdr).chain(bearer).collect();
+    edit_vault(|m| users.iter().for_each(|u| drop(m.remove(u))))
 }
 
 /// Inputs: previous and next server records. Outputs: Ok after deleting removed secret keys.
@@ -374,16 +418,12 @@ fn secret_keysets(server: &McpServer) -> (HashSet<String>, HashSet<String>, bool
 
 /// Inputs: mcp id and env key. Outputs: secret value if present.
 pub fn get_env_secret(mcp_id: &str, key: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, &secret_user("env", mcp_id, key))
-        .ok()
-        .and_then(|e| e.get_password().ok())
+    get_secret(&secret_user("env", mcp_id, key))
 }
 
 /// Inputs: mcp id and header key. Outputs: secret value if present.
 pub fn get_header_secret(mcp_id: &str, key: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, &secret_user("hdr", mcp_id, key))
-        .ok()
-        .and_then(|e| e.get_password().ok())
+    get_secret(&secret_user("hdr", mcp_id, key))
 }
 
 /// Inputs: mcp id. Outputs: optional bearer token for upstream HTTP.
@@ -393,16 +433,33 @@ pub fn get_bearer_secret(mcp_id: &str) -> Option<String> {
 
 /// Inputs: keyring user id and value. Outputs: unit after keychain write.
 fn set_secret(user: &str, value: &str) -> Result<(), ConfigError> {
-    keyring::Entry::new(SERVICE, user)?.set_password(value)?;
-    Ok(())
+    edit_vault(|m| drop(m.insert(user.into(), value.into())))
 }
 
 /// Inputs: keyring user id. Outputs: non-empty secret when present.
 fn get_secret(user: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, user)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|s| !s.is_empty())
+    vault_get(user).ok().flatten()
+}
+
+/// Inputs: kind (`oauth`/`oauthhost`), owner, client id, optional secret. Outputs: unit after
+/// one keychain write (an empty or missing secret removes the stored one).
+fn store_client(
+    kind: &str,
+    owner: &str,
+    id: &str,
+    secret: Option<&str>,
+) -> Result<(), ConfigError> {
+    let (id_user, secret_user) = (
+        secret_user(kind, owner, "client_id"),
+        secret_user(kind, owner, "client_secret"),
+    );
+    edit_vault(|m| {
+        m.insert(id_user, id.into());
+        match secret.filter(|s| !s.is_empty()) {
+            Some(s) => drop(m.insert(secret_user, s.into())),
+            None => drop(m.remove(&secret_user)),
+        }
+    })
 }
 
 /// Inputs: mcp id, client id, optional secret. Outputs: unit after keychain write.
@@ -411,12 +468,7 @@ pub fn store_oauth_client(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<(), ConfigError> {
-    set_secret(&secret_user("oauth", mcp_id, "client_id"), client_id)?;
-    match client_secret.filter(|s| !s.is_empty()) {
-        Some(secret) => set_secret(&secret_user("oauth", mcp_id, "client_secret"), secret)?,
-        None => delete_secret_entry(&secret_user("oauth", mcp_id, "client_secret"))?,
-    }
-    Ok(())
+    store_client("oauth", mcp_id, client_id, client_secret)
 }
 
 /// Inputs: mcp id. Outputs: saved OAuth client id if present.
@@ -435,12 +487,7 @@ pub fn store_oauth_host_client(
     client_id: &str,
     client_secret: Option<&str>,
 ) -> Result<(), ConfigError> {
-    set_secret(&secret_user("oauthhost", host, "client_id"), client_id)?;
-    match client_secret.filter(|s| !s.is_empty()) {
-        Some(secret) => set_secret(&secret_user("oauthhost", host, "client_secret"), secret)?,
-        None => delete_secret_entry(&secret_user("oauthhost", host, "client_secret"))?,
-    }
-    Ok(())
+    store_client("oauthhost", host, client_id, client_secret)
 }
 
 /// Inputs: host. Outputs: host-scoped OAuth client id if present.
@@ -473,10 +520,9 @@ pub fn oauth_session_present(mcp_id: &str) -> bool {
 
 /// Inputs: mcp id. Outputs: unit after deleting OAuth secrets for that MCP.
 pub fn delete_oauth_secrets(mcp_id: &str) -> Result<(), ConfigError> {
-    for key in ["client_id", "client_secret", "refresh_token"] {
-        delete_secret_entry(&secret_user("oauth", mcp_id, key))?;
-    }
-    Ok(())
+    let users =
+        ["client_id", "client_secret", "refresh_token"].map(|k| secret_user("oauth", mcp_id, k));
+    edit_vault(|m| users.iter().for_each(|u| drop(m.remove(u))))
 }
 
 /// Inputs: candidate MCP record. Outputs: Ok(()) or validation error.
@@ -725,6 +771,14 @@ mod tests {
     #[test]
     fn memory_secrets_round_trip() {
         use_memory_secrets();
+        let legacy = || keyring::Entry::new(SERVICE, "hdr:old:authorization_bearer").unwrap();
+        legacy().set_password("legacy").unwrap();
+        assert_eq!(get_bearer_secret("old").as_deref(), Some("legacy")); // moved into the vault
+        assert!(legacy().get_password().is_err()); // and the per-secret item is gone
+        rotate_key_token("k").unwrap();
+        *VAULT.lock().unwrap() = None; // a new process reads the same single item back
+        assert_eq!(get_bearer_secret("old").as_deref(), Some("legacy"));
+        assert!(ensure_key_token("k").unwrap() == ensure_key_token("k").unwrap());
         let secrets = SecretMap {
             bearer: Some("b".into()),
             ..Default::default()

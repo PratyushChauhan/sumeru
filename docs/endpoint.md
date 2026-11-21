@@ -43,7 +43,7 @@ All three are scoped by the request's API key: MCPs outside it are not listed an
 ## Storage and security
 
 - Config: app config dir `/sumeru/servers.json`
-- Secrets: OS keychain service `sumeru` (Default key token: `endpoint-token`; other keys: `key:<id>`)
+- Secrets: one OS keychain item, `sumeru` / `vault`, a JSON map (Default key token: `endpoint-token`; other keys: `key:<id>`)
 - Funnel binds only to `127.0.0.1`
 - Stdio commands are argv-based (no shell strings)
 - Upstream tool metadata/output is untrusted data
