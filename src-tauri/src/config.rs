@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use url::Url;
 

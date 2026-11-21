@@ -1,6 +1,6 @@
 [package]
 name = "sumeru"
-version = "0.4.3"
+version = "0.4.4"
 description = "Local MCP funnel desktop app"
 authors = ["Pratyush Chauhan"]
 license = "MIT"
@@ -8,13 +8,13 @@ edition = "2021"
 
 [lib]
 name = "sumeru_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [features]
 # Tauri desktop UI. Off (`--no-default-features`) for the headless binary the native
 # macOS app bundles as its engine.
 default = ["gui"]
-gui = ["dep:tauri", "dep:tauri-plugin-autostart", "dep:tauri-build", "dep:glib"]
+gui = ["dep:tauri", "dep:tauri-plugin-autostart", "dep:tauri-build", "dep:glib", "dep:tower-http"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
@@ -34,32 +34,45 @@ rmcp = { version = "2.2", features = [
   "transport-child-process",
   "transport-streamable-http-client-reqwest",
   "transport-streamable-http-server",
-  "reqwest",
 ] }
-axum = "0.8"
-tower-http = { version = "0.6", features = ["fs"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query"] }
+tower-http = { version = "0.6", features = ["fs"], optional = true }
 tokio = { version = "1", features = ["net", "process", "sync", "time", "rt-multi-thread", "macros", "io-std", "io-util"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
-reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "form"] }
 keyring = { version = "4", features = ["v1"] }
 keyring-core = "1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
-rand = "0.9"
+rand = "0.10"
 thiserror = "2"
 schemars = "1"
 http = "1"
 tower = "0.5"
-tracing = "0.1"
+tracing = { version = "0.1", features = ["release_max_level_off"] }
 sha2 = "0.11.0"
 base64 = "0.22.1"
 open = "5.4.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Apple's Security.framework (already linked by keyring) avoids bundling rustls + aws-lc-rs.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "stream", "form"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "form"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Match Tauri/gtk stack; used only to filter ayatana tray deprecation noise.
 glib = { version = "0.18", optional = true }
 
 [dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["json"] }
 tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

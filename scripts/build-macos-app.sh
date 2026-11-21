@@ -14,14 +14,16 @@ for t in aarch64-apple-darwin x86_64-apple-darwin; do
   cargo build --release --no-default-features --manifest-path src-tauri/Cargo.toml --target "$t"
 done
 lipo -create -output "$OUT/sumeru" src-tauri/target/{aarch64,x86_64}-apple-darwin/release/sumeru
-strip -x "$OUT/sumeru"
+strip "$OUT/sumeru"
 cp "$OUT/sumeru" "$APP/Contents/Helpers/sumeru"
 
 # SwiftUI shell, both arches.
 for a in arm64 x86_64; do
-  swift build -c release --package-path macos --product Sumeru --triple "$a-apple-macosx14.0"
+  swift build -c release --package-path macos --product Sumeru --triple "$a-apple-macosx14.0" \
+    -Xswiftc -Osize -Xswiftc -cross-module-optimization -Xlinker -dead_strip
 done
 lipo -create -output "$APP/Contents/MacOS/Sumeru" macos/.build/{arm64,x86_64}-apple-macosx/release/Sumeru
+strip "$APP/Contents/MacOS/Sumeru"
 
 sed "s/__VERSION__/$VERSION/g" macos/Resources/Info.plist > "$APP/Contents/Info.plist"
 cp macos/Resources/com.sumeru.app.login.plist "$APP/Contents/Library/LaunchAgents/"
@@ -38,6 +40,6 @@ DMG="$OUT/sumeru_${VERSION}_universal.dmg"
 STAGE=$(mktemp -d)
 cp -R "$APP" "$STAGE/" && ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname Sumeru -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+hdiutil create -volname Sumeru -srcfolder "$STAGE" -ov -format ULMO "$DMG" >/dev/null
 rm -rf "$STAGE"
 echo "$DMG"
