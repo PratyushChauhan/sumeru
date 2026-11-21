@@ -14,11 +14,9 @@ use rmcp::{
 };
 use tokio::{process::Command, sync::Mutex};
 
-use crate::{
-    config::{
-        self, get_bearer_secret, get_env_secret, get_header_secret, redact, transport_fingerprint,
-        ConfigError, McpServer, McpTransport,
-    },
+use crate::config::{
+    self, get_bearer_secret, get_env_secret, get_header_secret, redact, transport_fingerprint,
+    ConfigError, McpServer, McpTransport,
 };
 
 struct Cached {
@@ -104,7 +102,12 @@ impl ClientPool {
                 }
             }
         }
-        let running = connect(server).await?;
+        let running = match connect(server).await {
+            Err(err) if is_auth_error(&err) && refresh_bearer(server).await? => {
+                connect(server).await?
+            }
+            other => other?,
+        };
         let peer = running.peer().clone();
         *guard = Some(Cached {
             peer: peer.clone(),
@@ -117,9 +120,7 @@ impl ClientPool {
     /// Inputs: server. Outputs: upstream tool list (reconnects once on closed transport).
     pub async fn list_tools(&self, server: &McpServer) -> Result<Vec<Tool>, ConfigError> {
         match self.peer(server).await?.list_all_tools().await {
-            Ok(tools) => {
-                Ok(tools)
-            }
+            Ok(tools) => Ok(tools),
             Err(err) => {
                 self.invalidate(&server.id).await;
                 self.peer(server)
@@ -143,16 +144,51 @@ impl ClientPool {
         if let Some(args) = arguments {
             params = params.with_arguments(args);
         }
-        let result = peer
-            .call_tool(params)
-            .await
-            .map_err(|e| ConfigError::msg(redact(&e.to_string())));
-        result
+        match peer.call_tool(params.clone()).await {
+            // The upstream rejected the request, so a retry after a reconnect is safe.
+            Err(e) if is_unauthorized(&e.to_string()) => {
+                self.invalidate(&server.id).await;
+                self.peer(server).await?.call_tool(params).await
+            }
+            other => other,
+        }
+        .map_err(|e| ConfigError::msg(redact(&e.to_string())))
     }
+}
+
+/// Inputs: upstream error text. Outputs: true when it is an HTTP 401 (rmcp says "Auth required"
+/// when the 401 carries `WWW-Authenticate`, else "HTTP 401").
+fn is_unauthorized(err: &str) -> bool {
+    err.contains("Auth required") || err.contains("HTTP 401")
+}
+
+/// Inputs: connect error. Outputs: true when the upstream rejected our credentials.
+fn is_auth_error(err: &ConfigError) -> bool {
+    is_unauthorized(&err.to_string())
+}
+
+/// Inputs: server. Outputs: Ok(true) when an OAuth refresh stored a new bearer; Ok(false) when
+/// the server has no refresh token; Err asking to sign in again when the refresh is rejected.
+async fn refresh_bearer(server: &McpServer) -> Result<bool, ConfigError> {
+    let McpTransport::Http {
+        url,
+        has_bearer: true,
+        ..
+    } = &server.transport
+    else {
+        return Ok(false);
+    };
+    crate::oauth::refresh(url, &server.id).await.map_err(|e| {
+        ConfigError::msg(format!(
+            "{} session expired; sign in again ({e})",
+            server.name
+        ))
+    })
 }
 
 /// Inputs: server definition. Outputs: connected RunningService.
 async fn connect(server: &McpServer) -> Result<RunningService<RoleClient, ()>, ConfigError> {
+    config::reload_secrets(); // another process may have saved new credentials since
     match &server.transport {
         McpTransport::Stdio {
             command,
@@ -220,3 +256,116 @@ async fn connect(server: &McpServer) -> Result<RunningService<RoleClient, ()>, C
 
 /// Shared pool handle used by gateway and UI commands.
 pub type SharedPool = Arc<ClientPool>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        http::{HeaderMap, StatusCode},
+        response::IntoResponse,
+        routing::{get, post},
+        Json,
+    };
+    use serde_json::{json, Value};
+
+    /// Inputs: none. Outputs: base URL of a fake OAuth MCP whose `/mcp` accepts only bearer
+    /// `new`, and whose `/token` trades refresh token `rt` (client `cid`) for it.
+    async fn fake_oauth_mcp() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let resource = json!({ "authorization_servers": [base] });
+        let meta = json!({ "authorization_endpoint": format!("{base}/authorize"),
+            "token_endpoint": format!("{base}/token") });
+        let mcp = |headers: HeaderMap, Json(req): Json<Value>| async move {
+            if headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer new") {
+                return StatusCode::UNAUTHORIZED.into_response();
+            }
+            let result = match req["method"].as_str() {
+                Some("initialize") => json!({ "protocolVersion": "2025-06-18",
+                    "capabilities": { "tools": {} }, "serverInfo": { "name": "fake", "version": "0" } }),
+                Some("tools/list") => {
+                    json!({ "tools": [{ "name": "ping", "inputSchema": { "type": "object" } }] })
+                }
+                _ => return StatusCode::ACCEPTED.into_response(),
+            };
+            Json(json!({ "jsonrpc": "2.0", "id": req["id"], "result": result })).into_response()
+        };
+        let token = |body: String| async move {
+            let form: HashMap<String, String> = url::form_urlencoded::parse(body.as_bytes())
+                .into_owned()
+                .collect();
+            let ok = form["grant_type"] == "refresh_token"
+                && form["refresh_token"] == "rt"
+                && form["client_id"] == "cid";
+            match ok {
+                true => {
+                    Json(json!({ "access_token": "new", "refresh_token": "rt2" })).into_response()
+                }
+                false => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "invalid_grant" })),
+                )
+                    .into_response(),
+            }
+        };
+        let router = axum::Router::new()
+            .route("/mcp", post(mcp))
+            .route("/token", post(token))
+            .route(
+                "/.well-known/oauth-protected-resource/mcp",
+                get(|| async { Json(resource) }),
+            )
+            .route(
+                "/.well-known/oauth-authorization-server",
+                get(|| async { Json(meta) }),
+            );
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        base
+    }
+
+    /// Inputs: base URL, mcp id, saved refresh token. Outputs: an OAuth server whose access
+    /// token (`old`) has expired.
+    fn expired(base: &str, id: &str, refresh: &str) -> McpServer {
+        let bearer = config::SecretMap {
+            bearer: Some("old".into()),
+            ..Default::default()
+        };
+        config::store_secrets(id, &bearer).unwrap();
+        config::store_oauth_client(id, "cid", None).unwrap();
+        config::store_oauth_refresh(id, refresh).unwrap();
+        let url = format!("{base}/mcp");
+        let transport = McpTransport::Http {
+            url,
+            header_keys: vec![],
+            has_bearer: true,
+        };
+        McpServer {
+            id: id.into(),
+            name: "Fake".into(),
+            enabled: true,
+            transport,
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_oauth_token_is_refreshed_then_reconnects() {
+        config::use_memory_secrets();
+        let base = fake_oauth_mcp().await;
+        let server = expired(&base, "refresh-ok", "rt");
+        let tools = ClientPool::new().list_tools(&server).await.unwrap();
+        assert_eq!(tools[0].name, "ping");
+        assert_eq!(get_bearer_secret(&server.id).as_deref(), Some("new"));
+        assert_eq!(
+            config::get_oauth_refresh(&server.id).as_deref(),
+            Some("rt2")
+        ); // rotated
+
+        let revoked = expired(&base, "refresh-bad", "revoked");
+        let err = ClientPool::new()
+            .list_tools(&revoked)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Fake session expired; sign in again"), "{err}");
+    }
+}
