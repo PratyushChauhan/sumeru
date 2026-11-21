@@ -193,12 +193,17 @@ pub fn save_config(dir: &Path, config: &AppConfig) -> Result<(), ConfigError> {
 /// the file is dropped or the process exits), or None if another process holds it past `wait`.
 /// Engines take it at startup and the CLI takes it to edit the store with no engine running.
 pub fn lock_store(dir: &Path, wait: std::time::Duration) -> Option<File> {
+    lock_file(dir, "engine.lock", wait)
+}
+
+/// Inputs: directory, lock file name, longest wait. Outputs: the held lock, or None on timeout.
+fn lock_file(dir: &Path, name: &str, wait: std::time::Duration) -> Option<File> {
     fs::create_dir_all(dir).ok()?;
     let file = File::options()
         .create(true)
         .truncate(false)
         .write(true)
-        .open(dir.join("engine.lock"))
+        .open(dir.join(name))
         .ok()?;
     let start = std::time::Instant::now();
     while file.try_lock().is_err() {
@@ -217,7 +222,8 @@ pub fn use_memory_secrets() {
     ONCE.call_once(|| {
         let _ = keyring::Entry::new(SERVICE, "init"); // installs the platform store, so ours wins
         keyring_core::set_default_store(keyring_core::mock::Store::new().expect("memory store"));
-        *VAULT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        MEMORY_SECRETS.store(true, std::sync::atomic::Ordering::SeqCst);
+        reload_secrets();
     });
 }
 
@@ -250,23 +256,47 @@ fn token_user(key_id: &str) -> String {
 
 /// Every secret, cached after the first keychain read (see `read_vault`).
 static VAULT: std::sync::Mutex<Option<BTreeMap<String, String>>> = std::sync::Mutex::new(None);
+/// True once secrets live in process memory (`use_memory_secrets`): no cross-process lock needed.
+static MEMORY_SECRETS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Inputs: none. Outputs: all secrets from the single `vault` keychain item. The first run moves
-/// legacy one-item-per-secret entries into it, so macOS asks once per app update, not per secret.
-fn read_vault() -> Result<BTreeMap<String, String>, ConfigError> {
-    let vault = keyring::Entry::new(SERVICE, VAULT_USER)?;
+/// Inputs: none. Outputs: unit; the next secret read reloads the vault, picking up writes made
+/// by other processes (the engine, `mcp-stdio`, the CLI). Called before each upstream connect.
+pub fn reload_secrets() {
+    *VAULT.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Inputs: none. Outputs: a cross-process lock (`vault.lock` in the config dir) held while a
+/// process migrates or rewrites the vault, so one process can't overwrite another's write.
+/// None in memory mode or if the lock can't be taken (10 min covers a slow migration prompt).
+fn lock_vault() -> Option<File> {
+    if MEMORY_SECRETS.load(std::sync::atomic::Ordering::SeqCst) {
+        return None;
+    }
+    let dir = crate::sumeru_config_dir().ok()?;
+    lock_file(&dir, "vault.lock", std::time::Duration::from_secs(600))
+}
+
+/// Inputs: keychain service. Outputs: all secrets from its single `vault` item. The first run
+/// moves legacy one-item-per-secret entries into it, so macOS asks once per app update, not per
+/// secret. Callers hold `lock_vault`. Any unreadable legacy item aborts (retried next launch).
+fn load_vault(service: &str) -> Result<BTreeMap<String, String>, ConfigError> {
+    let vault = keyring::Entry::new(service, VAULT_USER)?;
     match vault.get_password() {
         Ok(json) => return Ok(serde_json::from_str(&json)?),
         Err(keyring::Error::NoEntry) => {}
         Err(err) => return Err(err.into()),
     }
-    let legacy: Vec<_> = keyring_core::Entry::search(&[("service", SERVICE)].into())?
-        .into_iter()
-        .filter_map(|e| Some((e.get_specifiers()?, e)))
-        .filter(|((s, u), _)| s == SERVICE && u != VAULT_USER)
-        .collect();
+    let mut legacy = vec![];
+    for entry in keyring_core::Entry::search(&[("service", service)].into())? {
+        let (svc, user) = entry
+            .get_specifiers()
+            .ok_or_else(|| ConfigError::msg("can't read a legacy keychain item; retry"))?;
+        if svc == service && user != VAULT_USER {
+            legacy.push((user, entry));
+        }
+    }
     let mut map = BTreeMap::new();
-    for ((_, user), entry) in &legacy {
+    for (user, entry) in &legacy {
         match entry.get_password() {
             Ok(value) => drop(map.insert(user.clone(), value)),
             Err(keyring::Error::NoEntry) => {}
@@ -282,7 +312,8 @@ fn read_vault() -> Result<BTreeMap<String, String>, ConfigError> {
 fn vault_get(user: &str) -> Result<Option<String>, ConfigError> {
     let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
     if cache.is_none() {
-        *cache = Some(read_vault()?);
+        let _lock = lock_vault();
+        *cache = Some(load_vault(SERVICE)?);
     }
     Ok(cache
         .as_ref()
@@ -294,7 +325,8 @@ fn vault_get(user: &str) -> Result<Option<String>, ConfigError> {
 /// Inputs: edit applied to a fresh copy of every secret. Outputs: unit after one keychain write.
 fn edit_vault(edit: impl FnOnce(&mut BTreeMap<String, String>)) -> Result<(), ConfigError> {
     let mut cache = VAULT.lock().unwrap_or_else(|e| e.into_inner());
-    let mut map = read_vault()?;
+    let _lock = lock_vault();
+    let mut map = load_vault(SERVICE)?;
     let before = map.clone();
     edit(&mut map);
     if map != before {
@@ -771,13 +803,16 @@ mod tests {
     #[test]
     fn memory_secrets_round_trip() {
         use_memory_secrets();
-        let legacy = || keyring::Entry::new(SERVICE, "hdr:old:authorization_bearer").unwrap();
+        // Own service, so other tests' writes to the shared store can't pre-create its vault.
+        let svc = "sumeru-migrate-test";
+        let legacy = || keyring::Entry::new(svc, "hdr:old:authorization_bearer").unwrap();
         legacy().set_password("legacy").unwrap();
-        assert_eq!(get_bearer_secret("old").as_deref(), Some("legacy")); // moved into the vault
-        assert!(legacy().get_password().is_err()); // and the per-secret item is gone
+        let moved = load_vault(svc).unwrap();
+        assert_eq!(moved.get("hdr:old:authorization_bearer").unwrap(), "legacy");
+        assert!(legacy().get_password().is_err()); // the per-secret item is gone
+        assert_eq!(load_vault(svc).unwrap(), moved); // later loads read the single vault item
         rotate_key_token("k").unwrap();
-        *VAULT.lock().unwrap() = None; // a new process reads the same single item back
-        assert_eq!(get_bearer_secret("old").as_deref(), Some("legacy"));
+        reload_secrets(); // another process's view: re-read from the store
         assert!(ensure_key_token("k").unwrap() == ensure_key_token("k").unwrap());
         let secrets = SecretMap {
             bearer: Some("b".into()),

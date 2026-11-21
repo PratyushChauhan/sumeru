@@ -2,6 +2,8 @@
 
 For HTTP MCPs that advertise OAuth (RFC 9728 / 8414), Sumeru shows **Sign in** and opens the provider login page in your browser. Tokens are stored in the keychain.
 
+When an access token expires, the upstream answers 401 and Sumeru trades the saved refresh token for a new one, then reconnects once — no browser. If the provider rejects the refresh (revoked or expired), the call fails with `<name> session expired; sign in again`; click **Sign in** again.
+
 ## Paths
 
 ### DCR (Dynamic Client Registration)
